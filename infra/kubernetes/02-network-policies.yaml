@@ -1,0 +1,285 @@
+# BUNKER MINER - Network Security Policies
+# Implements default-deny network policies with explicit allow rules
+# for secure pod-to-pod communication
+
+# Default deny all ingress and egress traffic
+# This creates a secure baseline where no traffic is allowed by default
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: bunker-miner
+  labels:
+    app.kubernetes.io/name: bunker-miner
+    app.kubernetes.io/component: network-policy
+    security.policy/type: default-deny
+spec:
+  podSelector: {} # Apply to all pods in namespace
+  policyTypes:
+  - Ingress
+  - Egress
+
+---
+# Allow DNS resolution
+# Pods need to resolve service names and external domains
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: bunker-miner
+  labels:
+    app.kubernetes.io/name: bunker-miner
+    app.kubernetes.io/component: network-policy
+    security.policy/type: allow-dns
+spec:
+  podSelector: {} # Apply to all pods
+  policyTypes:
+  - Egress
+  egress:
+  # Allow DNS queries to kube-dns
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    - podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+
+---
+# Allow communication to databases
+# Services can communicate with PostgreSQL and Redis
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-database-access
+  namespace: bunker-miner
+  labels:
+    app.kubernetes.io/name: bunker-miner
+    app.kubernetes.io/component: network-policy
+    security.policy/type: allow-database
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: api # Only API services can access databases
+  policyTypes:
+  - Egress
+  egress:
+  # Allow PostgreSQL access (RDS endpoint)
+  - ports:
+    - protocol: TCP
+      port: 5432
+  # Allow Redis access (ElastiCache endpoint) 
+  - ports:
+    - protocol: TCP
+      port: 6379
+
+---
+# Allow ingress to Pool API service
+# External load balancers and internal services can access Pool API
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pool-api-ingress
+  namespace: bunker-miner
+  labels:
+    app.kubernetes.io/name: bunker-miner
+    app.kubernetes.io/component: network-policy
+    security.policy/type: allow-pool-api
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pool-api-stub
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow from load balancer and ingress controllers
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: TCP
+      port: 8080
+  # Allow from other services in the same namespace
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/part-of: bunker-miner
+    ports:
+    - protocol: TCP
+      port: 8080
+
+---
+# Allow ingress to Fleet Controller service
+# WebSocket and HTTP traffic for fleet management
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-fleet-controller-ingress
+  namespace: bunker-miner
+  labels:
+    app.kubernetes.io/name: bunker-miner
+    app.kubernetes.io/component: network-policy
+    security.policy/type: allow-fleet-controller
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-controller-stub
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow WebSocket connections (port 8081)
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: TCP
+      port: 8081
+  # Allow HTTP API connections (port 8082)
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/part-of: bunker-miner
+    ports:
+    - protocol: TCP
+      port: 8082
+
+---
+# Allow ingress to Coin Daemon service
+# JSON-RPC access for mining operations
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-coin-daemon-ingress
+  namespace: bunker-miner
+  labels:
+    app.kubernetes.io/name: bunker-miner
+    app.kubernetes.io/component: network-policy
+    security.policy/type: allow-coin-daemon
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: coin-daemon-stub
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow JSON-RPC access from mining components
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/part-of: bunker-miner
+          app.kubernetes.io/component: mining
+    ports:
+    - protocol: TCP
+      port: 18081
+  # Allow access from monitoring and management tools
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: management
+    ports:
+    - protocol: TCP
+      port: 18081
+
+---
+# Allow HTTPS egress for external services
+# Services can make secure HTTPS requests to external APIs
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-https-egress
+  namespace: bunker-miner
+  labels:
+    app.kubernetes.io/name: bunker-miner
+    app.kubernetes.io/component: network-policy
+    security.policy/type: allow-https-egress
+spec:
+  podSelector:
+    matchLabels:
+      network.policy/allow-external: "true"
+  policyTypes:
+  - Egress
+  egress:
+  # Allow HTTPS traffic to any destination
+  - ports:
+    - protocol: TCP
+      port: 443
+  # Allow HTTP traffic for development (should be restricted in production)
+  - ports:
+    - protocol: TCP
+      port: 80
+
+---
+# Allow inter-service communication
+# Services within the application can communicate with each other
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-inter-service
+  namespace: bunker-miner
+  labels:
+    app.kubernetes.io/name: bunker-miner
+    app.kubernetes.io/component: network-policy
+    security.policy/type: allow-inter-service
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: bunker-miner
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress from other application components
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/part-of: bunker-miner
+  egress:
+  # Allow egress to other application components
+  - to:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/part-of: bunker-miner
+
+---
+# Allow monitoring and health checks
+# Monitoring systems can access health check endpoints
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-monitoring
+  namespace: bunker-miner
+  labels:
+    app.kubernetes.io/name: bunker-miner
+    app.kubernetes.io/component: network-policy
+    security.policy/type: allow-monitoring
+spec:
+  podSelector: {} # Apply to all pods
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow monitoring systems to access health endpoints
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: monitoring
+    ports:
+    - protocol: TCP
+      port: 8080 # Health check ports
+    - protocol: TCP
+      port: 8082

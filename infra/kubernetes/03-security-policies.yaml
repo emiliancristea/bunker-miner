@@ -1,0 +1,228 @@
+# BUNKER MINER - Pod Security Standards and RBAC
+# Implements strict security policies for all pods and service accounts
+
+# Pod Security Standards configuration
+# Enforces restricted security profile for all pods in the namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bunker-miner
+  labels:
+    # Enforce the restricted Pod Security Standard
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+
+---
+# Service Account for Pool API
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pool-api-service-account
+  namespace: bunker-miner
+  labels:
+    app.kubernetes.io/name: bunker-miner
+    app.kubernetes.io/component: pool-api
+  annotations:
+    # IRSA annotation will be added by Terraform
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME"
+automountServiceAccountToken: false # Explicitly disable token automounting for security
+
+---
+# Service Account for Fleet Controller
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fleet-controller-service-account
+  namespace: bunker-miner
+  labels:
+    app.kubernetes.io/name: bunker-miner
+    app.kubernetes.io/component: fleet-controller
+  annotations:
+    # IRSA annotation will be added by Terraform
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME"
+automountServiceAccountToken: false
+
+---
+# Service Account for Coin Daemon
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: coin-daemon-service-account
+  namespace: bunker-miner
+  labels:
+    app.kubernetes.io/name: bunker-miner
+    app.kubernetes.io/component: coin-daemon
+  annotations:
+    # IRSA annotation will be added by Terraform
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME"
+automountServiceAccountToken: false
+
+---
+# ClusterRole for basic pod operations
+# Minimal permissions required for service operation
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: bunker-miner-basic
+  labels:
+    app.kubernetes.io/name: bunker-miner
+    app.kubernetes.io/component: rbac
+rules:
+# Allow getting node information for hardware detection
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list"]
+# Allow getting pod information for self-discovery
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get"]
+  resourceNames: [] # Will be restricted to self in RoleBinding
+
+---
+# Role for namespace-specific operations
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: bunker-miner
+  name: bunker-miner-app
+  labels:
+    app.kubernetes.io/name: bunker-miner
+    app.kubernetes.io/component: rbac
+rules:
+# Allow reading ConfigMaps and Secrets
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list"]
+# Allow creating and updating Secrets for dynamic configuration
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["create", "update", "patch"]
+# Allow getting pod logs for debugging
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]
+# Allow getting service endpoints for service discovery
+- apiGroups: [""]
+  resources: ["endpoints", "services"]
+  verbs: ["get", "list"]
+
+---
+# RoleBinding for Pool API Service Account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pool-api-binding
+  namespace: bunker-miner
+  labels:
+    app.kubernetes.io/name: bunker-miner
+    app.kubernetes.io/component: rbac
+subjects:
+- kind: ServiceAccount
+  name: pool-api-service-account
+  namespace: bunker-miner
+roleRef:
+  kind: Role
+  name: bunker-miner-app
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# RoleBinding for Fleet Controller Service Account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: fleet-controller-binding
+  namespace: bunker-miner
+  labels:
+    app.kubernetes.io/name: bunker-miner
+    app.kubernetes.io/component: rbac
+subjects:
+- kind: ServiceAccount
+  name: fleet-controller-service-account
+  namespace: bunker-miner
+roleRef:
+  kind: Role
+  name: bunker-miner-app
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# RoleBinding for Coin Daemon Service Account  
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: coin-daemon-binding
+  namespace: bunker-miner
+  labels:
+    app.kubernetes.io/name: bunker-miner
+    app.kubernetes.io/component: rbac
+subjects:
+- kind: ServiceAccount
+  name: coin-daemon-service-account
+  namespace: bunker-miner
+roleRef:
+  kind: Role
+  name: bunker-miner-app
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ClusterRoleBinding for basic cluster access (minimal)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: bunker-miner-basic-binding
+  labels:
+    app.kubernetes.io/name: bunker-miner
+    app.kubernetes.io/component: rbac
+subjects:
+- kind: ServiceAccount
+  name: pool-api-service-account
+  namespace: bunker-miner
+- kind: ServiceAccount
+  name: fleet-controller-service-account
+  namespace: bunker-miner
+- kind: ServiceAccount
+  name: coin-daemon-service-account
+  namespace: bunker-miner
+roleRef:
+  kind: ClusterRole
+  name: bunker-miner-basic
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# SecurityContextConstraints for OpenShift compatibility (if needed)
+# This would be used in OpenShift environments
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: bunker-miner-scc
+  labels:
+    app.kubernetes.io/name: bunker-miner
+    app.kubernetes.io/component: security
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegeEscalation: false
+allowPrivilegedContainer: false
+allowedCapabilities: null
+defaultAddCapabilities: null
+fsGroup:
+  type: RunAsAny
+priority: 10
+readOnlyRootFilesystem: true
+requiredDropCapabilities:
+- ALL
+runAsUser:
+  type: MustRunAsNonRoot
+seLinuxContext:
+  type: MustRunAs
+supplementalGroups:
+  type: RunAsAny
+volumes:
+- configMap
+- downwardAPI
+- emptyDir
+- persistentVolumeClaim
+- projected
+- secret

@@ -1,0 +1,80 @@
+# BUNKER MINER - Kubernetes Namespace
+# Creates a dedicated namespace for the BUNKER MINER application
+# with security labels and resource quotas
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bunker-miner
+  labels:
+    app.kubernetes.io/name: bunker-miner
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: terraform
+    security.policy/isolation: strict
+    network.policy/enabled: "true"
+  annotations:
+    description: "BUNKER MINER cryptocurrency mining management platform"
+    contact: "emilian@bunkercorpo.com"
+    security.baseline: "strict"
+
+---
+# Resource Quota for the namespace
+# Limits resource consumption to prevent resource exhaustion
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: bunker-miner-quota
+  namespace: bunker-miner
+  labels:
+    app.kubernetes.io/name: bunker-miner
+    app.kubernetes.io/component: resource-quota
+spec:
+  hard:
+    # Compute resources
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8" 
+    limits.memory: 16Gi
+    
+    # Storage resources
+    requests.storage: 100Gi
+    persistentvolumeclaims: "10"
+    
+    # Object counts
+    pods: "20"
+    services: "10"
+    secrets: "20"
+    configmaps: "20"
+    deployments.apps: "10"
+    
+    # Load balancers
+    services.loadbalancers: "2"
+
+---
+# Limit Range for default resource limits
+# Ensures all containers have appropriate resource constraints
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: bunker-miner-limits
+  namespace: bunker-miner
+  labels:
+    app.kubernetes.io/name: bunker-miner
+    app.kubernetes.io/component: limit-range
+spec:
+  limits:
+  # Default limits for containers
+  - default:
+      cpu: 500m
+      memory: 512Mi
+    defaultRequest:
+      cpu: 100m
+      memory: 128Mi
+    type: Container
+    
+  # Limits for PersistentVolumeClaims
+  - max:
+      storage: 50Gi
+    min:
+      storage: 1Gi
+    type: PersistentVolumeClaim

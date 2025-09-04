@@ -1,0 +1,227 @@
+# BUNKER MINER - Local Development Environment
+# Docker Compose configuration for running the complete "smart stub" backend
+#
+# This file provides a full local development environment with:
+# - All backend service stubs (Pool API, Fleet Controller, Coin Daemon)
+# - Required databases (PostgreSQL, Redis)
+# - Secure networking and configuration
+#
+# Usage:
+#   docker-compose up -d                    # Start all services
+#   docker-compose logs -f [service]        # View logs
+#   docker-compose down                     # Stop all services
+#   docker-compose ps                       # Show service status
+
+version: '3.8'
+
+# Define explicit network for service communication
+networks:
+  bunker-miner-dev-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# Define volumes for persistent data
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+services:
+  # PostgreSQL Database
+  # Used for persistent storage of mining data, user accounts, and transactions
+  postgres:
+    image: postgres:15-alpine
+    container_name: bunker-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-bunker_miner}
+      POSTGRES_USER: ${POSTGRES_USER:-bunker_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_dev_password_123}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    ports:
+      - "5432:5432"
+    networks:
+      bunker-miner-dev-net:
+        ipv4_address: 172.20.0.10
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bunker_admin} -d ${POSTGRES_DB:-bunker_miner}"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run/postgresql
+
+  # Redis Cache
+  # Used for session management, caching, and real-time data
+  redis:
+    image: redis:7-alpine
+    container_name: bunker-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:-redis_dev_password_456}
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+      --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      bunker-miner-dev-net:
+        ipv4_address: 172.20.0.11
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  # Pool API Stub
+  # Provides mining pool management API endpoints
+  pool-api-stub:
+    build:
+      context: .
+      dockerfile: infra/stubs/pool-api-stub/Dockerfile
+    container_name: bunker-pool-api
+    restart: unless-stopped
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+      RUST_BACKTRACE: 1
+      POOL_API_BIND_ADDRESS: 0.0.0.0:8080
+    ports:
+      - "8080:8080"
+    networks:
+      bunker-miner-dev-net:
+        ipv4_address: 172.20.0.20
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/pool-api-stub", "--health-check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  # Fleet Controller Stub
+  # Provides WebSocket API for fleet management and telemetry
+  fleet-controller-stub:
+    build:
+      context: .
+      dockerfile: infra/stubs/fleet-controller-stub/Dockerfile
+    container_name: bunker-fleet-controller
+    restart: unless-stopped
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+      RUST_BACKTRACE: 1
+      FLEET_WS_BIND_ADDRESS: 0.0.0.0:8081
+      FLEET_HTTP_BIND_ADDRESS: 0.0.0.0:8082
+    ports:
+      - "8081:8081"  # WebSocket
+      - "8082:8082"  # HTTP API
+    networks:
+      bunker-miner-dev-net:
+        ipv4_address: 172.20.0.21
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/fleet-controller-stub", "--health-check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  # Coin Daemon Stub
+  # Provides cryptocurrency daemon JSON-RPC API
+  coin-daemon-stub:
+    build:
+      context: .
+      dockerfile: infra/stubs/coin-daemon-stub/Dockerfile
+    container_name: bunker-coin-daemon
+    restart: unless-stopped
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+      RUST_BACKTRACE: 1
+      COIN_DAEMON_BIND_ADDRESS: 0.0.0.0:18081
+      COIN_DAEMON_DIFFICULTY: ${COIN_DAEMON_DIFFICULTY:-300000000000}
+    ports:
+      - "18081:18081"
+    networks:
+      bunker-miner-dev-net:
+        ipv4_address: 172.20.0.22
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/coin-daemon-stub", "--health-check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  # Development Tools Container (Optional)
+  # Provides database management and debugging tools
+  dev-tools:
+    image: alpine:3.18
+    container_name: bunker-dev-tools
+    restart: "no"
+    profiles:
+      - tools
+    command: >
+      sh -c "
+        apk add --no-cache postgresql-client redis curl &&
+        echo 'Development tools ready. Use: docker-compose exec dev-tools sh' &&
+        tail -f /dev/null
+      "
+    networks:
+      bunker-miner-dev-net:
+        ipv4_address: 172.20.0.30
+    depends_on:
+      - postgres
+      - redis
+    security_opt:
+      - no-new-privileges:true
+
+# Health check and monitoring
+# Use: docker-compose ps
+# Use: docker-compose logs -f [service_name]
+# Use: curl http://localhost:8080/health (Pool API)
+# Use: curl http://localhost:8082/health (Fleet Controller)
+# Use: curl http://localhost:18081/health (Coin Daemon)
