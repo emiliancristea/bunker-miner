@@ -70,7 +70,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Install protoc
-        uses: arduino/setup-protoc@v2
+        uses: arduino/setup-protoc@v3
         with:
           version: '24.4'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -121,7 +121,7 @@ jobs:
           toolchain: stable
 
       - name: Install protoc
-        uses: arduino/setup-protoc@v2
+        uses: arduino/setup-protoc@v3
         with:
           version: '24.4'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -239,7 +239,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install protoc
-        uses: arduino/setup-protoc@v2
+        uses: arduino/setup-protoc@v3
         with:
           version: '24.4'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -422,7 +422,7 @@ jobs:
           toolchain: stable
 
       - name: Install protoc
-        uses: arduino/setup-protoc@v2
+        uses: arduino/setup-protoc@v3
         with:
           version: '24.4'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
