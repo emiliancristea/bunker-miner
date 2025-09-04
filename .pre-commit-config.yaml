@@ -1,0 +1,139 @@
+# BUNKER MINER Pre-commit Configuration
+# Enforces code quality and security standards across all languages
+
+repos:
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      # File format checks
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-xml
+      
+      # Security checks  
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=1000']  # Prevent large binaries
+      - id: check-case-conflict
+      - id: detect-private-key
+      
+      # Git checks
+      - id: check-executables-have-shebangs
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+
+  # Rust formatting and linting
+  - repo: https://github.com/doublify/pre-commit-rust
+    rev: v1.0
+    hooks:
+      # Rust formatter - enforces consistent code style
+      - id: fmt
+        name: Rust Format Check
+        entry: cargo fmt
+        args: ['--all', '--check']
+        language: system
+        files: \.rs$
+        pass_filenames: false
+        
+      # Rust linter - catches common mistakes and enforces best practices
+      - id: clippy
+        name: Rust Clippy Linter
+        entry: cargo clippy
+        args: ['--all-targets', '--all-features', '--', '-D', 'warnings']
+        language: system
+        files: \.rs$
+        pass_filenames: false
+
+  # C++ formatting (when clang-format is available)
+  - repo: https://github.com/pocc/pre-commit-hooks
+    rev: v1.3.5
+    hooks:
+      - id: clang-format
+        name: C++ Format Check
+        args: [--style=Google, --dry-run, --Werror]
+        files: \.(cpp|hpp|c|h|cc|cxx)$
+
+  # Security scanning for secrets
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.0
+    hooks:
+      - id: detect-secrets
+        name: Detect Secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: |
+          (?x)^(
+            .*\.lock$|
+            .*package-lock\.json$|
+            .*\.min\.js$|
+            development-plan/.*\.md$
+          )$
+
+  # Markdown and documentation
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.37.0
+    hooks:
+      - id: markdownlint
+        name: Markdown Linter
+        args: ['--fix']
+        files: \.md$
+        exclude: |
+          (?x)^(
+            development-plan/.*\.md$
+          )$
+
+  # YAML formatting
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.32.0
+    hooks:
+      - id: yamllint
+        name: YAML Linter
+        args: ['-d', 'relaxed']
+
+  # Local hooks for project-specific checks
+  - repo: local
+    hooks:
+      # Rust-specific security checks
+      - id: cargo-audit
+        name: Rust Security Audit
+        entry: cargo audit
+        language: system
+        files: Cargo\.toml$
+        pass_filenames: false
+        
+      # Check for TODO/FIXME without issue references
+      - id: check-todos
+        name: Check TODOs have issue references
+        entry: tools/check-todos.sh
+        language: script
+        files: \.(rs|cpp|hpp|c|h|py|js|ts)$
+        
+      # Ensure no hardcoded secrets or wallet addresses
+      - id: check-hardcoded-secrets
+        name: Check for hardcoded secrets
+        entry: tools/check-secrets.sh
+        language: script
+        files: \.(rs|cpp|hpp|c|h|toml|json|yml|yaml)$
+        
+      # Validate dependency versions are pinned
+      - id: check-dependency-pinning
+        name: Check dependency version pinning
+        entry: tools/check-dependencies.sh
+        language: script
+        files: (Cargo\.toml|CMakeLists\.txt|package\.json)$
+
+# Configuration for individual tools
+ci:
+  autofix_commit_msg: |
+    [pre-commit.ci] auto fixes from pre-commit hooks
+    
+    for more information, see https://pre-commit.ci
+  autofix_prs: true
+  autoupdate_branch: ''
+  autoupdate_commit_msg: '[pre-commit.ci] pre-commit autoupdate'
+  autoupdate_schedule: weekly
+  skip: []
+  submodules: false

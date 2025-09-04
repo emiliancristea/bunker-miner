@@ -1,0 +1,59 @@
+[package]
+name = "bunker-miner-daemon"
+version = "0.1.0"
+edition = "2021"
+authors = ["Emilian Cristea <emilian@bunkercorpo.com>"]
+description = "BUNKER MINER - Core mining daemon with hardware management and profit optimization"
+license = "MIT"
+repository = "https://github.com/emiliancristea/bunker-miner"
+keywords = ["mining", "cryptocurrency", "gpu", "daemon"]
+categories = ["network-programming"]
+
+[dependencies]
+# Core async runtime
+tokio = { version = "1.0", features = ["full"] }
+
+# gRPC server implementation
+tonic = "0.10"
+tonic-build = "0.10"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Configuration encryption
+age = "0.10"
+
+# Command line interface
+clap = { version = "4.0", features = ["derive"] }
+
+# Hardware interaction
+nvml-wrapper = "0.9"
+sysinfo = "0.29"
+
+# Regex for output parsing
+regex = "1.10"
+
+# HTTP client for API calls
+reqwest = { version = "0.11", features = ["json"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+[build-dependencies]
+tonic-build = "0.10"
+
+[dev-dependencies]
+tokio-test = "0.4"
+mockall = "0.11"
+tempfile = "3.0"
+
+[[bin]]
+name = "bunker-miner-daemon"
+path = "src/main.rs"
