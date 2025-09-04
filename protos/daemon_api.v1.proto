@@ -1,0 +1,563 @@
+// BUNKER MINER - Daemon API Contract v0.1
+// Copyright (C) 2025 Bunker Corporation
+//
+// This Protocol Buffer schema defines the canonical API contract between
+// the BUNKER MINER daemon (Rust backend) and client applications (C++/Qt frontend).
+//
+// Security Note: This API is designed to be secure by default, requiring
+// localhost binding and optional TLS for remote access.
+//
+// Version: 0.1.0
+// Status: STABLE - Breaking changes require new version
+// Last Updated: 2025-01-09
+
+syntax = "proto3";
+
+package bunker.daemon.v1;
+
+// Import common Google types for better interoperability
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// Service Options for Security and Documentation
+option go_package = "github.com/emiliancristea/bunker-miner/proto/daemon/v1";
+option java_package = "com.bunkercorpo.miner.daemon.v1";
+option java_multiple_files = true;
+option java_outer_classname = "DaemonApiV1Proto";
+option csharp_namespace = "BunkerCorp.Miner.Daemon.V1";
+
+// =============================================================================
+// CORE DATA STRUCTURES
+// =============================================================================
+
+// Represents detailed information about a mining device (GPU/CPU)
+message DeviceInfo {
+  // Unique device identifier (persistent across daemon restarts)
+  // Validated: Must be non-empty, max 128 characters
+  string device_id = 1;
+  
+  // Human-readable device name (e.g., "GeForce RTX 4090", "AMD Ryzen 9 7900X")
+  // Validated: Must be non-empty, max 256 characters
+  string name = 2;
+  
+  // Device vendor identification
+  enum Vendor {
+    VENDOR_UNKNOWN = 0;
+    VENDOR_NVIDIA = 1;
+    VENDOR_AMD = 2;
+    VENDOR_INTEL = 3;
+    VENDOR_OTHER = 4;
+  }
+  Vendor vendor = 3;
+  
+  // Device type classification
+  enum DeviceType {
+    DEVICE_TYPE_UNKNOWN = 0;
+    DEVICE_TYPE_GPU = 1;
+    DEVICE_TYPE_CPU = 2;
+    DEVICE_TYPE_ASIC = 3;
+    DEVICE_TYPE_FPGA = 4;
+  }
+  DeviceType device_type = 4;
+  
+  // Video memory size in megabytes (0 for non-GPU devices)
+  // Validated: >= 0, max 131072 (128GB theoretical max)
+  uint32 vram_mb = 5;
+  
+  // Processing unit count (cores for CPU, CUDA cores for GPU)
+  // Validated: > 0, max 65536
+  uint32 core_count = 6;
+  
+  // Driver version string (empty if not applicable)
+  // Validated: max 64 characters, format depends on vendor
+  string driver_version = 7;
+  
+  // Device compute capability or architecture
+  // Validated: max 32 characters
+  string compute_capability = 8;
+  
+  // Base clock frequency in MHz (0 if unknown)
+  // Validated: >= 0, max 10000 (10GHz theoretical max)
+  uint32 base_clock_mhz = 9;
+  
+  // Memory clock frequency in MHz (0 if not applicable)
+  // Validated: >= 0, max 10000
+  uint32 memory_clock_mhz = 10;
+  
+  // Power limit in watts (0 if unknown)
+  // Validated: >= 0, max 2000 (2kW theoretical max)
+  uint32 power_limit_watts = 11;
+  
+  // Device capabilities and supported features
+  repeated string capabilities = 12;
+}
+
+// Mining share statistics for performance tracking
+message ShareStats {
+  // Number of accepted shares
+  // Validated: >= 0
+  uint64 accepted = 1;
+  
+  // Number of rejected shares
+  // Validated: >= 0
+  uint64 rejected = 2;
+  
+  // Number of stale shares
+  // Validated: >= 0
+  uint64 stale = 3;
+  
+  // Share acceptance rate (0.0 to 1.0)
+  // Validated: >= 0.0, <= 1.0
+  float acceptance_rate = 4;
+  
+  // Average time between shares in seconds
+  // Validated: >= 0.0
+  float avg_share_time_seconds = 5;
+  
+  // Last share submission timestamp
+  google.protobuf.Timestamp last_share_time = 6;
+}
+
+// Real-time mining telemetry data
+message Telemetry {
+  // Device identifier this telemetry belongs to
+  // Validated: Must match existing DeviceInfo.device_id
+  string device_id = 1;
+  
+  // Timestamp when telemetry was captured
+  google.protobuf.Timestamp timestamp = 2;
+  
+  // Currently mining algorithm
+  // Validated: Must be non-empty, max 32 characters
+  string algorithm = 3;
+  
+  // Current hashrate in megahashes per second
+  // Validated: >= 0.0, max 1000000.0 (1TH/s theoretical max)
+  double hashrate_mhs = 4;
+  
+  // Power consumption in watts
+  // Validated: >= 0, max 2000
+  uint32 power_watts = 5;
+  
+  // Device temperature in Celsius
+  // Validated: >= 0, max 150 (safety limit)
+  uint32 temperature_celsius = 6;
+  
+  // Fan speed percentage (0-100)
+  // Validated: >= 0, <= 100
+  uint32 fan_speed_percent = 7;
+  
+  // GPU/Memory utilization percentage (0-100)
+  // Validated: >= 0, <= 100
+  uint32 utilization_percent = 8;
+  
+  // Memory utilization percentage (0-100, 0 if not applicable)
+  // Validated: >= 0, <= 100
+  uint32 memory_utilization_percent = 9;
+  
+  // Current core clock frequency in MHz
+  // Validated: >= 0, max 10000
+  uint32 core_clock_mhz = 10;
+  
+  // Current memory clock frequency in MHz
+  // Validated: >= 0, max 10000
+  uint32 memory_clock_mhz = 11;
+  
+  // Mining share statistics
+  ShareStats shares = 12;
+  
+  // Device status and health indicators
+  enum DeviceStatus {
+    DEVICE_STATUS_UNKNOWN = 0;
+    DEVICE_STATUS_IDLE = 1;
+    DEVICE_STATUS_MINING = 2;
+    DEVICE_STATUS_ERROR = 3;
+    DEVICE_STATUS_THERMAL_THROTTLING = 4;
+    DEVICE_STATUS_POWER_THROTTLING = 5;
+    DEVICE_STATUS_OFFLINE = 6;
+  }
+  DeviceStatus device_status = 13;
+  
+  // Error message if device_status indicates error
+  // Validated: max 512 characters
+  string error_message = 14;
+  
+  // Mining pool connection status
+  enum PoolStatus {
+    POOL_STATUS_UNKNOWN = 0;
+    POOL_STATUS_CONNECTED = 1;
+    POOL_STATUS_CONNECTING = 2;
+    POOL_STATUS_DISCONNECTED = 3;
+    POOL_STATUS_ERROR = 4;
+  }
+  PoolStatus pool_status = 15;
+  
+  // Current mining pool URL
+  // Validated: max 256 characters
+  string pool_url = 16;
+}
+
+// Profitability calculation for mining algorithms
+message ProfitabilityInfo {
+  // Mining algorithm name
+  // Validated: Must be non-empty, max 32 characters
+  string algorithm = 1;
+  
+  // Cryptocurrency coin symbol (e.g., "XMR", "ETH", "BTC")
+  // Validated: Must be non-empty, max 8 characters
+  string coin = 2;
+  
+  // Estimated daily revenue in EUR
+  // Validated: >= 0.0, max 100000.0 (sanity check)
+  double revenue_eur_day = 3;
+  
+  // Estimated daily electricity cost in EUR
+  // Validated: >= 0.0, max 10000.0 (sanity check)
+  double cost_eur_day = 4;
+  
+  // Net daily profit in EUR (revenue - cost)
+  // Validated: >= -10000.0, max 100000.0
+  double profit_eur_day = 5;
+  
+  // Current network difficulty
+  // Validated: >= 0.0
+  double network_difficulty = 6;
+  
+  // Current coin price in EUR
+  // Validated: >= 0.0
+  double coin_price_eur = 7;
+  
+  // Timestamp when profitability was calculated
+  google.protobuf.Timestamp calculated_at = 8;
+  
+  // Confidence level of profitability estimate (0.0 to 1.0)
+  // Validated: >= 0.0, <= 1.0
+  float confidence = 9;
+  
+  // Data source for profitability calculation
+  // Validated: max 64 characters
+  string data_source = 10;
+}
+
+// Mining configuration for algorithm/pool settings
+message MiningConfig {
+  // Mining algorithm to use
+  // Validated: Must be non-empty, max 32 characters
+  string algorithm = 1;
+  
+  // Mining pool URL
+  // Validated: Must be valid URL format, max 256 characters
+  string pool_url = 2;
+  
+  // Mining pool port
+  // Validated: > 0, <= 65535
+  uint32 pool_port = 3;
+  
+  // Worker name/identifier
+  // Validated: Must be non-empty, max 64 characters
+  string worker_name = 4;
+  
+  // Wallet address for mining rewards
+  // Validated: Must be non-empty, max 256 characters
+  string wallet_address = 5;
+  
+  // Optional mining password
+  // Validated: max 128 characters
+  string password = 6;
+  
+  // Target devices for mining (empty = all available)
+  repeated string target_device_ids = 7;
+  
+  // Mining intensity (0.0 to 1.0, 1.0 = maximum)
+  // Validated: >= 0.0, <= 1.0
+  float intensity = 8;
+  
+  // Additional miner-specific parameters
+  map<string, string> extra_params = 9;
+}
+
+// =============================================================================
+// REQUEST/RESPONSE MESSAGES
+// =============================================================================
+
+// Response for system information requests
+message SystemInfoResponse {
+  // List of all detected mining devices
+  repeated DeviceInfo devices = 1;
+  
+  // System information
+  message SystemInfo {
+    // Operating system name and version
+    string os_name = 1;
+    string os_version = 2;
+    
+    // Total system memory in GB
+    uint32 total_memory_gb = 3;
+    
+    // Available system memory in GB
+    uint32 available_memory_gb = 4;
+    
+    // CPU information
+    string cpu_name = 5;
+    uint32 cpu_cores = 6;
+    uint32 cpu_threads = 7;
+    
+    // System uptime in seconds
+    uint64 uptime_seconds = 8;
+  }
+  SystemInfo system_info = 2;
+  
+  // Daemon version information
+  message VersionInfo {
+    string daemon_version = 1;
+    string api_version = 2;
+    string build_timestamp = 3;
+    string git_commit = 4;
+  }
+  VersionInfo version_info = 3;
+  
+  // Response timestamp
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+// Request to start mining operations
+message StartMiningRequest {
+  // Mining configuration
+  MiningConfig config = 1;
+  
+  // Whether to stop existing mining before starting
+  bool stop_existing = 2;
+  
+  // Timeout for starting mining in seconds
+  // Validated: >= 1, <= 300 (5 minutes max)
+  uint32 timeout_seconds = 3;
+}
+
+// Request to stop mining operations
+message StopMiningRequest {
+  // Specific device IDs to stop (empty = stop all)
+  repeated string device_ids = 1;
+  
+  // Whether to force stop (kill processes)
+  bool force_stop = 2;
+  
+  // Timeout for stopping mining in seconds
+  // Validated: >= 1, <= 60 (1 minute max)
+  uint32 timeout_seconds = 3;
+}
+
+// Generic command response
+message CommandResponse {
+  // Command execution status
+  enum Status {
+    STATUS_UNKNOWN = 0;
+    STATUS_SUCCESS = 1;
+    STATUS_ERROR = 2;
+    STATUS_TIMEOUT = 3;
+    STATUS_PARTIAL_SUCCESS = 4;
+  }
+  Status status = 1;
+  
+  // Human-readable response message
+  // Validated: max 1024 characters
+  string message = 2;
+  
+  // Detailed error information (only if status = ERROR)
+  message ErrorDetails {
+    // Error code for programmatic handling
+    string error_code = 1;
+    
+    // Detailed error description
+    string error_description = 2;
+    
+    // Affected device IDs (if applicable)
+    repeated string affected_devices = 3;
+    
+    // Suggested remediation steps
+    repeated string remediation_steps = 4;
+  }
+  ErrorDetails error_details = 3;
+  
+  // Response timestamp
+  google.protobuf.Timestamp timestamp = 4;
+  
+  // Execution duration in milliseconds
+  uint32 execution_duration_ms = 5;
+}
+
+// Response for profitability requests
+message ProfitabilityResponse {
+  // Profitability information for different algorithms
+  repeated ProfitabilityInfo profitability_info = 1;
+  
+  // Recommended algorithm based on profitability
+  string recommended_algorithm = 2;
+  
+  // Response timestamp
+  google.protobuf.Timestamp timestamp = 3;
+  
+  // Data freshness indicator (how old the data is in seconds)
+  uint32 data_age_seconds = 4;
+}
+
+// Configuration management messages
+message GetConfigRequest {
+  // Configuration section to retrieve (empty = all)
+  string section = 1;
+}
+
+message GetConfigResponse {
+  // Configuration data in JSON format
+  string config_json = 1;
+  
+  // Configuration version/hash for change detection
+  string config_version = 2;
+  
+  // Response timestamp
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+message SetConfigRequest {
+  // Configuration data in JSON format
+  string config_json = 1;
+  
+  // Whether to validate configuration before applying
+  bool validate_only = 2;
+  
+  // Whether to restart affected services
+  bool restart_services = 3;
+}
+
+message SetConfigResponse {
+  // Configuration update status
+  CommandResponse.Status status = 1;
+  
+  // Validation errors (if any)
+  repeated string validation_errors = 2;
+  
+  // Services that need restart (if restart_services = false)
+  repeated string services_requiring_restart = 3;
+  
+  // Response timestamp
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+// Health check and monitoring messages
+message HealthCheckResponse {
+  // Overall daemon health status
+  enum HealthStatus {
+    HEALTH_UNKNOWN = 0;
+    HEALTH_HEALTHY = 1;
+    HEALTH_DEGRADED = 2;
+    HEALTH_UNHEALTHY = 3;
+  }
+  HealthStatus status = 1;
+  
+  // Individual component health checks
+  message ComponentHealth {
+    string component_name = 1;
+    HealthStatus status = 2;
+    string status_message = 3;
+    google.protobuf.Timestamp last_check = 4;
+  }
+  repeated ComponentHealth component_health = 2;
+  
+  // Response timestamp
+  google.protobuf.Timestamp timestamp = 3;
+  
+  // Daemon uptime in seconds
+  uint64 uptime_seconds = 4;
+}
+
+// =============================================================================
+// BUNKER MINER DAEMON SERVICE DEFINITION
+// =============================================================================
+
+// The primary gRPC service for BUNKER MINER daemon communication
+// This service provides comprehensive mining management and monitoring capabilities
+service BunkerMinerDaemon {
+  // System Information and Health
+  
+  // Get comprehensive system and device information
+  rpc GetSystemInfo(google.protobuf.Empty) returns (SystemInfoResponse) {
+    // Security: Read-only operation, minimal sensitive data exposure
+    // Rate Limit: 10 requests/second per client
+  }
+  
+  // Health check for monitoring and load balancing
+  rpc HealthCheck(google.protobuf.Empty) returns (HealthCheckResponse) {
+    // Security: Read-only operation, no sensitive data
+    // Rate Limit: 100 requests/second per client (high frequency monitoring)
+  }
+  
+  // Mining Operations Control
+  
+  // Start mining with specified configuration
+  rpc StartMining(StartMiningRequest) returns (CommandResponse) {
+    // Security: State-changing operation, requires authentication for remote access
+    // Rate Limit: 5 requests/second per client
+    // Validation: Full input validation on MiningConfig
+  }
+  
+  // Stop mining operations
+  rpc StopMining(StopMiningRequest) returns (CommandResponse) {
+    // Security: State-changing operation, requires authentication for remote access
+    // Rate Limit: 5 requests/second per client
+  }
+  
+  // Real-time Data Streaming
+  
+  // Stream real-time telemetry data from mining devices
+  rpc StreamTelemetry(google.protobuf.Empty) returns (stream Telemetry) {
+    // Security: Long-lived connection, implement connection limits
+    // Rate Limit: 1 concurrent stream per client
+    // Data Rate: Maximum 10 updates/second per device
+  }
+  
+  // Profitability and Market Data
+  
+  // Get current profitability calculations for supported algorithms
+  rpc GetProfitability(google.protobuf.Empty) returns (ProfitabilityResponse) {
+    // Security: Read-only operation, market data only
+    // Rate Limit: 1 request/minute per client (data updated infrequently)
+  }
+  
+  // Configuration Management
+  
+  // Retrieve daemon configuration
+  rpc GetConfig(GetConfigRequest) returns (GetConfigResponse) {
+    // Security: May contain sensitive data, requires authentication for remote access
+    // Rate Limit: 10 requests/second per client
+  }
+  
+  // Update daemon configuration
+  rpc SetConfig(SetConfigRequest) returns (SetConfigResponse) {
+    // Security: High-risk operation, requires strong authentication
+    // Rate Limit: 1 request/second per client
+    // Validation: Comprehensive input validation and configuration schema checking
+  }
+}
+
+// =============================================================================
+// SECURITY ANNOTATIONS AND METADATA
+// =============================================================================
+
+// Security Classification: This API handles the following data types:
+// - PUBLIC: System information, device capabilities, market data
+// - INTERNAL: Real-time telemetry, mining statistics
+// - CONFIDENTIAL: Configuration data, wallet addresses, API keys
+// - RESTRICTED: Administrative operations (start/stop mining, configuration changes)
+
+// Threat Model Summary:
+// - Network binding: localhost-only by default, TLS required for remote access
+// - Authentication: API key or certificate-based for remote access
+// - Authorization: Role-based access control for administrative operations
+// - Rate limiting: Per-endpoint limits to prevent DoS attacks
+// - Input validation: Comprehensive validation for all user inputs
+// - Data encryption: TLS for transport, encrypted storage for sensitive config
+
+// Compliance Requirements:
+// - No logging of sensitive data (wallet addresses, API keys)
+// - Audit trail for all administrative operations
+// - Secure defaults for all configuration options
+// - Graceful degradation when security constraints are violated

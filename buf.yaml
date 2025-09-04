@@ -1,0 +1,62 @@
+# Buf configuration for Protocol Buffer management
+# This file configures buf for linting, breaking change detection, and documentation generation
+
+version: v1
+name: buf.build/bunkercorp/bunker-miner
+deps:
+  - buf.build/googleapis/googleapis
+
+modules:
+  - path: protos
+
+lint:
+  use:
+    - DEFAULT
+    - COMMENTS
+    - FILE_LAYOUT
+  except:
+    - PACKAGE_VERSION_SUFFIX # Allow v1 suffix in package names
+    - SERVICE_SUFFIX # Allow Service suffix in service names
+  
+  rules:
+    # Enforce consistent naming conventions
+    - ENUM_PASCAL_CASE
+    - ENUM_VALUE_UPPER_SNAKE_CASE
+    - FIELD_LOWER_SNAKE_CASE
+    - MESSAGE_PASCAL_CASE
+    - PACKAGE_LOWER_SNAKE_CASE
+    - RPC_PASCAL_CASE
+    - SERVICE_PASCAL_CASE
+    
+    # Security and best practices
+    - ENUM_NO_ALLOW_ALIAS
+    - FIELD_NO_DESCRIPTOR
+    - IMPORT_NO_WEAK
+    - PACKAGE_DEFINED
+    - PACKAGE_DIRECTORY_MATCH
+    - PACKAGE_NO_IMPORT_CYCLE
+    
+    # Documentation requirements
+    - COMMENT_ENUM
+    - COMMENT_ENUM_VALUE
+    - COMMENT_FIELD
+    - COMMENT_MESSAGE
+    - COMMENT_RPC
+    - COMMENT_SERVICE
+
+breaking:
+  use:
+    - FILE
+  except:
+    - EXTENSION_MESSAGE_NO_DELETE # Allow extension deletions for now
+    - FIELD_SAME_CTYPE # Allow ctype changes for optimization
+
+# Documentation generation configuration
+docs:
+  enabled: true
+  formats:
+    - html
+    - markdown
+  output_directory: docs/api
+  title: "BUNKER MINER Daemon API v1"
+  description: "Comprehensive API documentation for the BUNKER MINER daemon gRPC service"

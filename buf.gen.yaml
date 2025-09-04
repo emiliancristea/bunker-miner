@@ -1,0 +1,51 @@
+# Buf code generation configuration
+# Generates gRPC code for multiple languages and documentation
+
+version: v1
+
+managed:
+  enabled: true
+  cc_enable_arenas: false
+  java_multiple_files: true
+  java_string_check_utf8: true
+  optimize_for: SPEED
+
+plugins:
+  # Rust code generation (primary backend language)
+  - plugin: buf.build/community/neoeinstein-prost:v0.4.0
+    out: daemon/src/generated
+    opt:
+      - bytes=.
+      - type_attribute=.=serde::Serialize,serde::Deserialize
+      - field_attribute=.=serde(rename_all = "snake_case")
+  
+  - plugin: buf.build/community/neoeinstein-tonic:v0.4.0
+    out: daemon/src/generated
+    opt:
+      - build_server=true
+      - build_client=true
+      - compile_well_known_types=true
+  
+  # C++ code generation (client applications)
+  - plugin: buf.build/protocolbuffers/cpp:v21.12
+    out: client/src/generated
+    opt:
+      - lite_runtime
+  
+  - plugin: buf.build/grpc/cpp:v1.51.1
+    out: client/src/generated
+    opt:
+      - lite_runtime
+  
+  # Documentation generation
+  - plugin: buf.build/pseudomuto/protoc-gen-doc:v1.5.1
+    out: docs/api
+    opt:
+      - html,index.html:BUNKER MINER Daemon API v1
+  
+  # JSON Schema generation for validation
+  - plugin: buf.build/bufbuild/protoc-gen-jsonschema:v1.4.4
+    out: docs/api/schemas
+    opt:
+      - json_fieldnames
+      - enforce_oneof

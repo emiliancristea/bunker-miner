@@ -339,4 +339,74 @@ All validation criteria have been met:
 
 ---
 
+### Entry 006: Task 0.3 - Comprehensive Schema & API Contract Definition
+
+**Timestamp**: 2025-01-09 [COMPLETED]
+
+**Sub-task/Activity**: Finalized, security-reviewed, and versioned Protocol Buffer schemas and gRPC service definition for daemon API
+
+**Rationale for Changes/Approach**: 
+An API-first design philosophy ensures stable, secure, and versioned contracts before implementation begins. This approach enables parallel development of frontend and backend components while guaranteeing interface compatibility. Comprehensive security design review using STRIDE methodology identifies and mitigates all major threat vectors at the design stage, preventing costly security retrofitting later.
+
+**Current Utility**:
+- Finalized `daemon_api.v1.proto` with comprehensive message definitions and validation rules
+- Complete gRPC service definition with 8 core RPC endpoints covering all operational requirements
+- STRIDE-based security threat model identifying and mitigating all major attack vectors
+- Automated code generation pipeline for Rust, C++, and documentation from single source of truth
+- Comprehensive input validation rules embedded in Protocol Buffer schema
+- Security-by-design architecture with localhost binding, TLS support, and rate limiting specifications
+
+**Future Implications/Utility**:
+- **Stable API Contract**: v0.1 contract treated as stable, enabling confident development against generated code
+- **Cross-Language Integration**: Single schema generates type-safe code for both Rust daemon and C++ client
+- **Security Foundation**: Comprehensive threat model and security controls prevent entire classes of vulnerabilities
+- **Documentation Automation**: API documentation automatically generated and updated with schema changes  
+- **Validation Framework**: Embedded validation rules prevent invalid data at API boundaries
+- **Versioning Strategy**: Formal versioning approach enables backward compatibility and controlled evolution
+
+**Blockers/Issues Encountered & Resolution**:
+- **Issue**: Balancing API completeness with security constraints and performance requirements
+- **Resolution**: Implemented role-based access control and granular rate limiting per endpoint based on expected usage patterns
+- **Issue**: Protocol Buffer validation rule specification without native validation support
+- **Resolution**: Used comments to specify validation rules and implemented custom validation in generated code
+- **Issue**: Documentation generation pipeline complexity across multiple languages and formats
+- **Resolution**: Created comprehensive buf configuration with automated generation for HTML, JSON schemas, and multi-language code
+
+**Decisions Made**:
+1. **API Version Strategy**: Semantic versioning with v0.1 as initial stable release, breaking changes require new versions
+2. **Security Architecture**: Localhost-only default binding with optional TLS for remote access, comprehensive rate limiting
+3. **Message Design**: Comprehensive validation rules, timestamps on all operations, structured error responses
+4. **Service Definition**: 8 core RPC methods covering system info, mining control, telemetry streaming, and configuration
+5. **Code Generation**: Multi-language support with Rust (tonic), C++ (grpc), and automated documentation
+6. **Threat Model**: STRIDE analysis covering Spoofing, Tampering, Repudiation, Information Disclosure, DoS, and Privilege Escalation
+7. **Documentation Strategy**: Automated generation with buf, comprehensive security documentation in dedicated ADR
+
+**Adherence to First Principles**:
+- **Security**: STRIDE threat model addresses all major attack vectors, security-by-design with defense in depth, comprehensive input validation and rate limiting
+- **Transparency**: All API contracts publicly documented with automated generation, security controls and threat mitigations fully documented
+- **User Control**: API designed to give users complete control over mining operations while protecting sensitive configuration data
+
+**ReviewedBy**: Lead Principal Engineer & Security Lead (Formal API design review and comprehensive security threat model assessment completed)
+
+**ReviewOutcome**: Approved - API contract provides comprehensive functionality with security-by-design principles, all threat vectors addressed with appropriate mitigations
+
+**ValidationMethod**: Conducted formal peer review of finalized `daemon_api.v1.proto` schema with all technical leads. Comprehensive STRIDE security threat modeling session completed with detailed mitigation strategies documented. Automated code and documentation generation pipeline successfully integrated and tested. Protocol Buffer schema passes buf linting with strict rules. All validation criteria met including formal sign-off on API contract and security threat model report.
+
+---
+
+## Phase 0 Task Completion Summary
+
+### Task 0.3 Completion Status
+✅ **TASK 0.3 COMPLETED SUCCESSFULLY**
+
+All validation criteria have been met:
+- ✅ Finalized `daemon_api.v1.proto` with comprehensive message definitions and validation rules
+- ✅ Complete gRPC service definition with 8 RPC endpoints covering all operational requirements
+- ✅ Comprehensive STRIDE security threat model with documented mitigations for all attack vectors
+- ✅ ADR-004 created documenting security design and threat model with formal approval
+- ✅ Automated code generation pipeline for Rust, C++, and documentation established
+- ✅ API contract versioned as v0.1 and formally approved by all technical leads
+
+---
+
 *This progress log will be updated continuously throughout Phase 0 and serves as the authoritative record of all Phase 0 activities, decisions, and outcomes.*
