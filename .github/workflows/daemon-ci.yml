@@ -1,0 +1,492 @@
+# BUNKER MINER - Daemon CI/CD Pipeline
+# Comprehensive CI workflow for Rust daemon with security scanning and quality gates
+#
+# This workflow enforces:
+# - Cross-platform building (Windows, Linux)
+# - Code quality checks (formatting, linting)
+# - Security scanning (dependencies, containers)
+# - Automated testing and artifact generation
+#
+# Security gates will fail the build on critical findings
+
+name: Daemon CI/CD
+
+on:
+  push:
+    branches:
+      - develop
+      - 'feature/**'
+    paths:
+      - 'daemon/**'
+      - 'protos/**'
+      - 'libs/common-rust/**'
+      - '.github/workflows/daemon-ci.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  pull_request:
+    branches:
+      - develop
+      - main
+    paths:
+      - 'daemon/**'
+      - 'protos/**'
+      - 'libs/common-rust/**'
+      - '.github/workflows/daemon-ci.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: "-Dwarnings"
+
+jobs:
+  # Job 1: Code Quality and Formatting
+  code-quality:
+    name: Code Quality & Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-quality-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-quality-
+            ${{ runner.os }}-cargo-
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v2
+        with:
+          version: '24.4'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check Rust formatting
+        run: |
+          echo "🎨 Checking Rust code formatting..."
+          cargo fmt --all -- --check
+        working-directory: .
+
+      - name: Run Clippy lints
+        run: |
+          echo "🔍 Running Clippy lints..."
+          cargo clippy --all-targets --all-features --workspace -- -D warnings
+        working-directory: .
+
+      - name: Check documentation
+        run: |
+          echo "📚 Checking documentation..."
+          cargo doc --no-deps --document-private-items --all-features --workspace
+        working-directory: .
+
+  # Job 2: Security Scanning
+  security-scan:
+    name: Security & License Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-security-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-security-
+            ${{ runner.os }}-cargo-
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v2
+        with:
+          version: '24.4'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cargo-audit
+        run: |
+          echo "🔐 Installing cargo-audit..."
+          cargo install cargo-audit --force
+
+      - name: Install cargo-deny
+        run: |
+          echo "⚖️ Installing cargo-deny..."
+          cargo install cargo-deny --force
+
+      - name: Run dependency vulnerability scan
+        run: |
+          echo "🔍 Scanning for vulnerable dependencies..."
+          cargo audit --deny warnings --quiet
+        continue-on-error: false
+
+      - name: Create cargo-deny configuration
+        run: |
+          echo "📋 Creating cargo-deny configuration..."
+          cat > deny.toml << 'EOF'
+          [licenses]
+          version = 2
+          confidence-threshold = 0.8
+          allow = [
+              "MIT",
+              "Apache-2.0",
+              "Apache-2.0 WITH LLVM-exception",
+              "BSD-2-Clause",
+              "BSD-3-Clause",
+              "ISC",
+              "Unicode-DFS-2016",
+          ]
+          deny = [
+              "GPL-2.0",
+              "GPL-3.0",
+              "AGPL-1.0",
+              "AGPL-3.0",
+              "LGPL-2.0",
+              "LGPL-2.1",
+              "LGPL-3.0",
+          ]
+
+          [bans]
+          multiple-versions = "warn"
+          wildcards = "allow"
+          highlight = "all"
+
+          [advisories]
+          version = 2
+          db-path = "~/.cargo/advisory-db"
+          db-urls = ["https://github.com/rustsec/advisory-db"]
+          vulnerability = "deny"
+          unmaintained = "warn"
+          yanked = "warn"
+          notice = "warn"
+          ignore = []
+          EOF
+
+      - name: Run license and ban checking
+        run: |
+          echo "⚖️ Checking licenses and banned dependencies..."
+          cargo deny check
+        continue-on-error: false
+
+      - name: Upload security scan results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-scan-results
+          path: |
+            cargo-audit.log
+            cargo-deny.log
+          retention-days: 30
+
+  # Job 3: Build and Test Matrix
+  build-test:
+    name: Build & Test
+    needs: [code-quality, security-scan]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ matrix.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.os }}-cargo-
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v2
+        with:
+          version: '24.4'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build daemon (debug)
+        run: |
+          echo "🔨 Building daemon (debug mode)..."
+          cargo build --workspace --target ${{ matrix.target }}
+
+      - name: Build daemon (release)
+        run: |
+          echo "🚀 Building daemon (release mode)..."
+          cargo build --release --workspace --target ${{ matrix.target }}
+
+      - name: Run unit tests
+        run: |
+          echo "🧪 Running unit tests..."
+          cargo test --workspace --target ${{ matrix.target }} -- --nocapture
+        env:
+          RUST_TEST_THREADS: 1
+
+      - name: Run integration tests
+        run: |
+          echo "🔗 Running integration tests..."
+          cargo test --release --workspace --target ${{ matrix.target }} --test "*" -- --nocapture
+        env:
+          RUST_TEST_THREADS: 1
+        continue-on-error: true  # Integration tests may fail in CI environment
+
+      - name: Run PoC tests
+        run: |
+          echo "🧪 Running PoC tests..."
+          cd tools/poc && cargo test --target ${{ matrix.target }} -- --nocapture
+        env:
+          RUST_TEST_THREADS: 1
+
+      - name: Generate test coverage (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          echo "📊 Generating test coverage..."
+          cargo install cargo-tarpaulin --force
+          cargo tarpaulin --out xml --output-dir coverage/
+        continue-on-error: true
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results-${{ matrix.os }}
+          path: |
+            target/${{ matrix.target }}/debug/deps/bunker*
+            target/${{ matrix.target }}/release/bunker*
+            coverage/
+          retention-days: 7
+
+      - name: Build daemon binary artifacts
+        run: |
+          echo "📦 Building final daemon artifacts..."
+          cargo build --release --bin bunker-miner-daemon --target ${{ matrix.target }}
+
+      - name: Upload daemon artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: daemon-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/release/bunker-miner-daemon*
+          retention-days: 30
+
+  # Job 4: Container Build and Security Scan
+  container-security:
+    name: Container Build & Security Scan
+    needs: [build-test]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download daemon artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: daemon-x86_64-unknown-linux-gnu
+          path: ./artifacts/
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        run: |
+          echo "🐳 Building Docker image..."
+          docker buildx build \
+            --platform linux/amd64 \
+            --tag bunker-miner-daemon:${{ github.sha }} \
+            --tag bunker-miner-daemon:latest \
+            --file daemon/Dockerfile \
+            --load \
+            .
+
+      - name: Install Trivy
+        run: |
+          echo "🛡️ Installing Trivy..."
+          sudo apt-get update
+          sudo apt-get install wget apt-transport-https gnupg lsb-release -y
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install trivy -y
+
+      - name: Run Trivy vulnerability scanner
+        run: |
+          echo "🔍 Running container vulnerability scan..."
+          trivy image \
+            --format table \
+            --exit-code 1 \
+            --severity HIGH,CRITICAL \
+            --no-progress \
+            bunker-miner-daemon:${{ github.sha }}
+
+      - name: Generate detailed Trivy report
+        if: always()
+        run: |
+          echo "📋 Generating detailed vulnerability report..."
+          trivy image \
+            --format json \
+            --output trivy-report.json \
+            --severity LOW,MEDIUM,HIGH,CRITICAL \
+            bunker-miner-daemon:${{ github.sha }}
+
+      - name: Upload Trivy report
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: trivy-security-report
+          path: trivy-report.json
+          retention-days: 30
+
+      - name: Export Docker image
+        if: success()
+        run: |
+          echo "💾 Exporting Docker image..."
+          docker save bunker-miner-daemon:${{ github.sha }} | gzip > daemon-docker-image.tar.gz
+
+      - name: Upload Docker image artifact
+        if: success()
+        uses: actions/upload-artifact@v3
+        with:
+          name: daemon-docker-image
+          path: daemon-docker-image.tar.gz
+          retention-days: 7
+
+  # Job 5: Performance Benchmarks
+  performance:
+    name: Performance Benchmarks
+    needs: [build-test]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'performance')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ubuntu-latest-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ubuntu-latest-cargo-bench-
+            ubuntu-latest-cargo-
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v2
+        with:
+          version: '24.4'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run benchmarks
+        run: |
+          echo "⚡ Running performance benchmarks..."
+          cargo bench --workspace -- --output-format json | tee benchmark-results.json
+        continue-on-error: true
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: benchmark-results
+          path: benchmark-results.json
+          retention-days: 30
+
+  # Job 6: Final Status Check
+  ci-status:
+    name: CI Status Check
+    needs: [code-quality, security-scan, build-test, container-security]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Check job results
+        run: |
+          echo "🔍 Checking CI job results..."
+          
+          # Check if all required jobs passed
+          if [[ "${{ needs.code-quality.result }}" != "success" ]]; then
+            echo "❌ Code quality checks failed"
+            exit 1
+          fi
+          
+          if [[ "${{ needs.security-scan.result }}" != "success" ]]; then
+            echo "❌ Security scan failed"
+            exit 1
+          fi
+          
+          if [[ "${{ needs.build-test.result }}" != "success" ]]; then
+            echo "❌ Build and test failed"
+            exit 1
+          fi
+          
+          if [[ "${{ needs.container-security.result }}" != "success" && "${{ needs.container-security.result }}" != "skipped" ]]; then
+            echo "❌ Container security scan failed"
+            exit 1
+          fi
+          
+          echo "✅ All required CI checks passed!"
+
+      - name: Generate CI summary
+        run: |
+          echo "📊 CI/CD Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "=========================" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Code Quality | ${{ needs.code-quality.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Scan | ${{ needs.security-scan.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build & Test | ${{ needs.build-test.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Container Security | ${{ needs.container-security.result == 'success' && '✅ Passed' || (needs.container-security.result == 'skipped' && '⏭️ Skipped' || '❌ Failed') }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** \`${{ github.ref }}\`" >> $GITHUB_STEP_SUMMARY

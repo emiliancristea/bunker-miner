@@ -1,0 +1,70 @@
+# GitHub Dependabot Configuration
+# Automated dependency updates with security focus
+
+version: 2
+
+updates:
+  # Rust dependencies (Cargo)
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "emiliancristea"
+    labels:
+      - "dependencies"
+      - "rust"
+      - "security"
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps(dev)"
+      include: "scope"
+    # Only allow security and patch updates for stable dependencies
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  # Docker dependencies
+  - package-ecosystem: "docker"
+    directory: "/daemon"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "emiliancristea"
+    labels:
+      - "dependencies"
+      - "docker"
+      - "security"
+    commit-message:
+      prefix: "docker"
+      include: "scope"
+
+  # GitHub Actions dependencies
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "wednesday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "emiliancristea"
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "ci-cd"
+    commit-message:
+      prefix: "ci"
+      include: "scope"

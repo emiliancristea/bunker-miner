@@ -1,0 +1,357 @@
+# BUNKER MINER - Security Scanning Workflow
+# Comprehensive security scanning across the entire repository
+#
+# This workflow runs:
+# - CodeQL analysis for static security analysis
+# - Dependency vulnerability scanning
+# - Secret detection
+# - Container security scanning
+# - License compliance checking
+
+name: Security Scanning
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # Run security scans weekly on Sundays at 2 AM UTC
+    - cron: '0 2 * * 0'
+
+permissions:
+  security-events: write
+  contents: read
+  actions: read
+
+jobs:
+  # Job 1: CodeQL Analysis
+  codeql-analysis:
+    name: CodeQL Security Analysis
+    runs-on: ubuntu-latest
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['cpp', 'javascript']  # Rust not yet supported by CodeQL
+        
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # Override default queries with security-focused query suite
+          queries: security-extended,security-and-quality
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{matrix.language}}"
+
+  # Job 2: Rust Security Analysis (using cargo-audit and custom tools)
+  rust-security:
+    name: Rust Security Analysis
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ubuntu-latest-cargo-security-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install security tools
+        run: |
+          echo "🔐 Installing Rust security tools..."
+          cargo install cargo-audit cargo-deny cargo-geiger --force
+
+      - name: Run cargo-audit (vulnerability scanning)
+        run: |
+          echo "🔍 Running dependency vulnerability scan..."
+          cargo audit --json > audit-results.json
+          # Also run with human-readable output
+          cargo audit
+
+      - name: Run cargo-geiger (unsafe code analysis)
+        run: |
+          echo "⚡ Analyzing unsafe code usage..."
+          cargo geiger --format json > geiger-results.json || true
+          # Also run with human-readable output
+          cargo geiger || true
+
+      - name: Custom security checks
+        run: |
+          echo "🔍 Running custom security checks..."
+          
+          # Check for hardcoded secrets in Rust code
+          echo "Checking for potential hardcoded secrets..."
+          if grep -r -i "password\|secret\|api_key\|private_key" --include="*.rs" daemon/src/ tools/poc/src/ libs/; then
+            echo "⚠️ Potential hardcoded secrets found - please review"
+          fi
+          
+          # Check for unsafe blocks
+          echo "Checking for unsafe code blocks..."
+          unsafe_count=$(grep -r "unsafe" --include="*.rs" daemon/src/ tools/poc/src/ libs/ | wc -l)
+          echo "Found $unsafe_count unsafe blocks"
+          if [ $unsafe_count -gt 10 ]; then
+            echo "⚠️ High number of unsafe blocks detected - review recommended"
+          fi
+          
+          # Check for network operations
+          echo "Checking for network operations..."
+          if grep -r -i "TcpStream\|UdpSocket\|reqwest\|hyper" --include="*.rs" daemon/src/; then
+            echo "ℹ️ Network operations detected - ensure proper security controls"
+          fi
+
+      - name: Upload security scan results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: rust-security-results
+          path: |
+            audit-results.json
+            geiger-results.json
+          retention-days: 90
+
+  # Job 3: Container Security Scanning
+  container-security:
+    name: Container Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image for scanning
+        run: |
+          echo "🐳 Building Docker image for security scanning..."
+          # Create a minimal build for scanning
+          echo 'FROM gcr.io/distroless/cc-debian12:nonroot
+          COPY . /app
+          WORKDIR /app
+          USER nonroot:nonroot
+          ' > Dockerfile.scan
+          docker build -f Dockerfile.scan -t bunker-security-scan:latest .
+
+      - name: Install Trivy
+        run: |
+          echo "🛡️ Installing Trivy security scanner..."
+          sudo apt-get update
+          sudo apt-get install wget apt-transport-https gnupg lsb-release -y
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install trivy -y
+
+      - name: Run Trivy vulnerability scan
+        run: |
+          echo "🔍 Running comprehensive container security scan..."
+          
+          # Scan for all severities and output to SARIF format
+          trivy image \
+            --format sarif \
+            --output trivy-results.sarif \
+            --severity LOW,MEDIUM,HIGH,CRITICAL \
+            bunker-security-scan:latest
+          
+          # Also generate human-readable report
+          trivy image \
+            --format table \
+            --severity LOW,MEDIUM,HIGH,CRITICAL \
+            bunker-security-scan:latest > trivy-report.txt
+
+      - name: Upload Trivy scan results to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-container-scan
+
+      - name: Upload detailed Trivy results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: trivy-security-results
+          path: |
+            trivy-results.sarif
+            trivy-report.txt
+          retention-days: 90
+
+  # Job 4: Secret Detection
+  secret-detection:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for comprehensive secret scanning
+
+      - name: Install TruffleHog
+        run: |
+          echo "🔍 Installing TruffleHog secret scanner..."
+          curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Run TruffleHog secret scan
+        run: |
+          echo "🕵️ Scanning for secrets in repository..."
+          trufflehog git file://. --json > trufflehog-results.json || true
+          
+          # Also run with human-readable output
+          trufflehog git file://. --no-update || true
+
+      - name: Custom secret detection
+        run: |
+          echo "🔍 Running custom secret detection patterns..."
+          
+          # Define patterns for common secrets
+          patterns=(
+            "api[_-]?key[_-]?[=:]"
+            "secret[_-]?key[_-]?[=:]"
+            "password[_-]?[=:]"
+            "private[_-]?key"
+            "access[_-]?token"
+            "auth[_-]?token"
+            "wallet[_-]?address[_-]?[=:]"
+            "[A-Za-z0-9]{32,}"  # Potential API keys
+          )
+          
+          for pattern in "${patterns[@]}"; do
+            echo "Checking pattern: $pattern"
+            if grep -r -i -E "$pattern" --exclude-dir=.git --exclude="*.json" --exclude="*.lock" . | head -10; then
+              echo "⚠️ Potential secrets found with pattern: $pattern"
+            fi
+          done
+
+      - name: Upload secret scan results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: secret-scan-results
+          path: |
+            trufflehog-results.json
+          retention-days: 90
+
+  # Job 5: License Compliance
+  license-compliance:
+    name: License Compliance Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install license checking tools
+        run: |
+          echo "⚖️ Installing license checking tools..."
+          cargo install cargo-license cargo-deny --force
+
+      - name: Generate license report
+        run: |
+          echo "📋 Generating comprehensive license report..."
+          
+          # Generate detailed license information
+          cargo license --json > licenses.json
+          cargo license --tsv > licenses.tsv
+          
+          # Check for license compliance
+          echo "Checking license compliance..."
+          cargo deny check licenses
+
+      - name: Validate license compatibility
+        run: |
+          echo "✅ Validating license compatibility..."
+          
+          # Check for GPL or other copyleft licenses that might conflict
+          if grep -i "gpl\|agpl\|copyleft" licenses.tsv; then
+            echo "⚠️ Potential license compatibility issues found"
+            echo "Please review the licenses listed above"
+          fi
+          
+          # Count licenses by type
+          echo "License summary:"
+          awk -F'\t' 'NR>1 {count[$2]++} END {for (license in count) print license ": " count[license]}' licenses.tsv
+
+      - name: Upload license compliance results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: license-compliance-results
+          path: |
+            licenses.json
+            licenses.tsv
+          retention-days: 90
+
+  # Job 6: Security Summary
+  security-summary:
+    name: Security Scan Summary
+    runs-on: ubuntu-latest
+    needs: [codeql-analysis, rust-security, container-security, secret-detection, license-compliance]
+    if: always()
+    
+    steps:
+      - name: Generate security summary
+        run: |
+          echo "🛡️ Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "======================" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Scan Type | Status | Notes |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| CodeQL Analysis | ${{ needs.codeql-analysis.result == 'success' && '✅ Passed' || '❌ Failed' }} | Static security analysis |" >> $GITHUB_STEP_SUMMARY
+          echo "| Rust Security | ${{ needs.rust-security.result == 'success' && '✅ Passed' || '❌ Failed' }} | Dependency and unsafe code analysis |" >> $GITHUB_STEP_SUMMARY
+          echo "| Container Security | ${{ needs.container-security.result == 'success' && '✅ Passed' || '❌ Failed' }} | Docker image vulnerability scan |" >> $GITHUB_STEP_SUMMARY
+          echo "| Secret Detection | ${{ needs.secret-detection.result == 'success' && '✅ Passed' || '❌ Failed' }} | Repository secret scanning |" >> $GITHUB_STEP_SUMMARY
+          echo "| License Compliance | ${{ needs.license-compliance.result == 'success' && '✅ Passed' || '❌ Failed' }} | Open source license validation |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Security Reports:** All detailed security reports are available as workflow artifacts." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Action Required:** Review any failed scans and address security findings before merging." >> $GITHUB_STEP_SUMMARY
+
+      - name: Check for security failures
+        run: |
+          echo "🔍 Checking for security scan failures..."
+          
+          # Check critical security scans
+          critical_failures=0
+          
+          if [[ "${{ needs.rust-security.result }}" == "failure" ]]; then
+            echo "❌ Critical: Rust security scan failed"
+            critical_failures=$((critical_failures + 1))
+          fi
+          
+          if [[ "${{ needs.container-security.result }}" == "failure" ]]; then
+            echo "❌ Critical: Container security scan failed"
+            critical_failures=$((critical_failures + 1))
+          fi
+          
+          if [ $critical_failures -gt 0 ]; then
+            echo "❌ $critical_failures critical security scan(s) failed"
+            echo "Security issues must be resolved before merging"
+            exit 1
+          fi
+          
+          echo "✅ All critical security scans passed or completed with acceptable results"

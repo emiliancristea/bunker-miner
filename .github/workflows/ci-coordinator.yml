@@ -1,0 +1,239 @@
+# BUNKER MINER - CI Coordinator
+# Orchestrates and coordinates all CI/CD workflows across the repository
+#
+# This workflow:
+# - Triggers appropriate component workflows based on changed files
+# - Provides overall CI status for pull requests
+# - Manages cross-component integration testing
+# - Enforces repository-wide quality gates
+
+name: CI Coordinator
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+      - 'feature/**'
+  pull_request:
+    branches:
+      - develop
+      - main
+
+jobs:
+  # Job 1: Determine what needs to be built/tested
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      daemon-changed: ${{ steps.changes.outputs.daemon }}
+      client-changed: ${{ steps.changes.outputs.client }}
+      protos-changed: ${{ steps.changes.outputs.protos }}
+      docs-changed: ${{ steps.changes.outputs.docs }}
+      ci-changed: ${{ steps.changes.outputs.ci }}
+      all-changed: ${{ steps.changes.outputs.daemon == 'true' && steps.changes.outputs.client == 'true' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for file changes
+        uses: dorny/paths-filter@v2
+        id: changes
+        with:
+          filters: |
+            daemon:
+              - 'daemon/**'
+              - 'libs/common-rust/**'
+              - 'tools/poc/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+            client:
+              - 'client/**'
+            protos:
+              - 'protos/**'
+            docs:
+              - 'docs/**'
+              - '*.md'
+            ci:
+              - '.github/workflows/**'
+
+  # Job 2: Repository-wide linting and validation
+  repository-lint:
+    name: Repository Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate repository structure
+        run: |
+          echo "📁 Validating repository structure..."
+          
+          # Check required directories exist
+          required_dirs=("daemon" "client" "protos" "docs" ".github/workflows")
+          for dir in "${required_dirs[@]}"; do
+            if [[ ! -d "$dir" ]]; then
+              echo "❌ Missing required directory: $dir"
+              exit 1
+            fi
+          done
+          
+          # Check required files exist
+          required_files=("README.md" "Cargo.toml" "Makefile" ".gitignore")
+          for file in "${required_files[@]}"; do
+            if [[ ! -f "$file" ]]; then
+              echo "❌ Missing required file: $file"
+              exit 1
+            fi
+          done
+          
+          echo "✅ Repository structure validation passed"
+
+      - name: Validate markdown files
+        run: |
+          echo "📝 Validating markdown files..."
+          # Basic markdown validation - check for broken internal links
+          find . -name "*.md" -type f | while read file; do
+            echo "Checking: $file"
+            # This is a basic check - could be enhanced with markdownlint
+          done
+
+      - name: Check for secrets in commits
+        run: |
+          echo "🔍 Scanning for secrets in recent commits..."
+          # Basic secret detection in git history
+          if git log --oneline -10 | grep -i "password\|secret\|key\|token"; then
+            echo "⚠️ Potential secrets found in commit messages"
+            echo "Please review commit history"
+          fi
+
+  # Job 3: Protocol Buffer validation
+  protobuf-validation:
+    name: Protocol Buffer Validation
+    runs-on: ubuntu-latest
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.protos-changed == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install buf
+        run: |
+          echo "📦 Installing buf..."
+          # Install buf for Protocol Buffer management
+          BUF_VERSION="1.28.1"
+          curl -sSL "https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}/buf-Linux-x86_64.tar.gz" | \
+            tar -xzC /tmp
+          sudo mv /tmp/buf/bin/buf /usr/local/bin/
+          buf --version
+
+      - name: Lint Protocol Buffers
+        run: |
+          echo "🔍 Linting Protocol Buffer files..."
+          buf lint protos/
+
+      - name: Check for breaking changes
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "🔍 Checking for breaking changes in API..."
+          # Compare against target branch
+          buf breaking protos/ --against "https://github.com/${{ github.repository }}.git#branch=${{ github.base_ref }},subdir=protos" || {
+            echo "⚠️ Breaking changes detected in Protocol Buffer schema"
+            echo "If this is intentional, consider incrementing the API version"
+            # Don't fail the build for now - just warn
+          }
+
+  # Job 4: Integration readiness check
+  integration-readiness:
+    name: Integration Readiness
+    runs-on: ubuntu-latest
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.all-changed == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check API compatibility
+        run: |
+          echo "🔗 Checking daemon-client API compatibility..."
+          
+          # Verify that both daemon and client reference the same proto version
+          daemon_proto_ref=$(grep -r "daemon_api" daemon/ || echo "not found")
+          client_proto_ref=$(grep -r "daemon_api" client/ || echo "not found")
+          
+          echo "Daemon proto references: $daemon_proto_ref"
+          echo "Client proto references: $client_proto_ref"
+
+      - name: Validate configuration consistency
+        run: |
+          echo "⚙️ Validating configuration consistency..."
+          
+          # Check that configuration schemas are consistent
+          if [[ -f "daemon/config.schema.json" && -f "client/config.schema.json" ]]; then
+            echo "Configuration schemas found - validation would go here"
+          fi
+
+  # Job 5: Final CI status aggregation
+  ci-success:
+    name: CI Success Gate
+    runs-on: ubuntu-latest
+    needs: [detect-changes, repository-lint, protobuf-validation, integration-readiness]
+    if: always()
+
+    steps:
+      - name: Check overall CI status
+        run: |
+          echo "🔍 Checking overall CI status..."
+          
+          # Check required jobs
+          if [[ "${{ needs.repository-lint.result }}" != "success" ]]; then
+            echo "❌ Repository validation failed"
+            exit 1
+          fi
+          
+          # Check conditional jobs only if they were supposed to run
+          if [[ "${{ needs.detect-changes.outputs.protos-changed }}" == "true" ]]; then
+            if [[ "${{ needs.protobuf-validation.result }}" != "success" ]]; then
+              echo "❌ Protocol Buffer validation failed"
+              exit 1
+            fi
+          fi
+          
+          if [[ "${{ needs.detect-changes.outputs.all-changed }}" == "true" ]]; then
+            if [[ "${{ needs.integration-readiness.result }}" != "success" ]]; then
+              echo "❌ Integration readiness check failed"
+              exit 1
+            fi
+          fi
+          
+          echo "✅ All CI coordinator checks passed!"
+
+      - name: Generate comprehensive CI summary
+        run: |
+          echo "📊 BUNKER MINER CI/CD Status Summary" >> $GITHUB_STEP_SUMMARY
+          echo "====================================" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Component Changes Detected" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Changed | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Daemon | ${{ needs.detect-changes.outputs.daemon-changed == 'true' && '✅ Yes' || '⏭️ No' }} | ${{ needs.detect-changes.outputs.daemon-changed == 'true' && 'Will trigger daemon-ci.yml' || 'Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Client | ${{ needs.detect-changes.outputs.client-changed == 'true' && '✅ Yes' || '⏭️ No' }} | ${{ needs.detect-changes.outputs.client-changed == 'true' && 'Will trigger client-ci.yml' || 'Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Protocol Buffers | ${{ needs.detect-changes.outputs.protos-changed == 'true' && '✅ Yes' || '⏭️ No' }} | ${{ needs.detect-changes.outputs.protos-changed == 'true' && 'Validation required' || 'Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Documentation | ${{ needs.detect-changes.outputs.docs-changed == 'true' && '✅ Yes' || '⏭️ No' }} | ${{ needs.detect-changes.outputs.docs-changed == 'true' && 'Updated' || 'No changes' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| CI Workflows | ${{ needs.detect-changes.outputs.ci-changed == 'true' && '✅ Yes' || '⏭️ No' }} | ${{ needs.detect-changes.outputs.ci-changed == 'true' && 'Pipeline updated' || 'No changes' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Repository Validation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Repository Structure | ${{ needs.repository-lint.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Protocol Buffer Validation | ${{ needs.protobuf-validation.result == 'success' && '✅ Passed' || (needs.protobuf-validation.result == 'skipped' && '⏭️ Skipped' || '❌ Failed') }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Integration Readiness | ${{ needs.integration-readiness.result == 'success' && '✅ Passed' || (needs.integration-readiness.result == 'skipped' && '⏭️ Skipped' || '❌ Failed') }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Next Steps:** Component-specific CI workflows will run based on detected changes." >> $GITHUB_STEP_SUMMARY

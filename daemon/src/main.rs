@@ -10,6 +10,12 @@ fn main() {
         .version("0.1.0")
         .author("Emilian Cristea <emilian@bunkercorpo.com>")
         .about("BUNKER MINER - Secure cryptocurrency mining daemon")
+        .arg(
+            Arg::new("health-check")
+                .long("health-check")
+                .help("Perform health check and exit")
+                .action(clap::ArgAction::SetTrue)
+        )
         .subcommand(
             Command::new("benchmark")
                 .about("Run hardware benchmarking for all supported algorithms")
@@ -27,6 +33,20 @@ fn main() {
                 .about("Show current mining status")
         )
         .get_matches();
+
+    // Handle health check
+    if matches.get_flag("health-check") {
+        println!("BUNKER MINER Daemon Health Check");
+        println!("Status: OK");
+        println!("Version: 0.1.0");
+        
+        // Basic system checks
+        let system = sysinfo::System::new_all();
+        println!("System Memory: {} GB", system.total_memory() / 1024 / 1024 / 1024);
+        println!("Available Memory: {} GB", system.available_memory() / 1024 / 1024 / 1024);
+        
+        process::exit(0);
+    }
 
     match matches.subcommand() {
         Some(("benchmark", _)) => {
