@@ -22,8 +22,10 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
 
-# Configuration encryption
+# Configuration encryption and security
 age = "0.10"
+secrecy = "0.8"
+rpassword = "7.0"
 
 # Command line interface
 clap = { version = "4.0", features = ["derive"] }
@@ -54,6 +56,9 @@ reqwest = { version = "0.11", features = ["json"] }
 # Error handling
 anyhow = "1.0"
 thiserror = "1.0"
+
+# Async traits
+async-trait = "0.1"
 
 # Logging
 tracing = "0.1"

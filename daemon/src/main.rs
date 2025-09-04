@@ -1,16 +1,21 @@
 mod hardware;
 mod benchmarking;
 mod profiles;
+mod config;
+mod miners;
 
 use clap::{Arg, Command};
 use std::process;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
+use tokio::time::{timeout, Duration};
 use tracing::{info, warn, error};
 
 use hardware::HardwareDetector;
 use benchmarking::BenchmarkingEngine;
 use profiles::ProfileManager;
+use config::ConfigManager;
+use miners::{MinerManager, ProcessSupervisor, Telemetry};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -91,9 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             show_profiles_command().await?;
         }
         Some(("start", _)) => {
-            info!("Starting mining operation...");
-            println!("BUNKER MINER Daemon - Start Mining");
-            println!("This functionality will be implemented in Phase 1.2");
+            start_mining_command().await?;
         }
         Some(("stop", _)) => {
             info!("Stopping mining operation...");
@@ -369,6 +372,167 @@ async fn show_profiles_command() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+async fn start_mining_command() -> Result<(), Box<dyn std::error::Error>> {
+    println!("BUNKER MINER Daemon - Start Mining");
+    println!("==================================");
+    
+    info!("Initializing mining operation...");
+    
+    // Initialize configuration manager
+    let mut config_manager = ConfigManager::new()?;
+    let config = config_manager.load_config().await?;
+    
+    info!("✓ Configuration loaded successfully");
+    
+    // Initialize hardware detector
+    let mut hardware_detector = HardwareDetector::new()?;
+    let devices = hardware_detector.detect_devices()?;
+    
+    if devices.is_empty() {
+        return Err("No mining devices detected. Please ensure GPU drivers are installed and accessible.".into());
+    }
+    
+    info!("✓ Detected {} mining device(s)", devices.len());
+    
+    // Initialize miner manager
+    let miner_manager = MinerManager::new()?;
+    
+    // Select appropriate miner for configured coin
+    let adapter = miner_manager.get_adapter_for_coin(&config.mining.active_coin)
+        .ok_or_else(|| format!("No miner adapter available for coin: {}", config.mining.active_coin))?;
+    
+    info!("✓ Selected {} miner for {}", adapter.get_name(), config.mining.active_coin);
+    
+    // Ensure miner binary is available
+    let binary_path = miner_manager.ensure_binary_available(&adapter).await?;
+    info!("✓ Miner binary ready: {}", binary_path.display());
+    
+    // Select devices to use (for now, use all compatible devices)
+    let compatible_devices: Vec<_> = devices.iter()
+        .filter(|device| {
+            // Check if device supports any of the miner's algorithms
+            device.supported_algorithms.iter()
+                .any(|algo| adapter.get_supported_algorithms().contains(algo))
+        })
+        .collect();
+    
+    if compatible_devices.is_empty() {
+        return Err("No compatible devices found for the selected miner and coin".into());
+    }
+    
+    let device_ids: Vec<String> = compatible_devices.iter()
+        .enumerate()
+        .map(|(i, _)| i.to_string())
+        .collect();
+    
+    info!("✓ Using {} compatible device(s)", compatible_devices.len());
+    for (i, device) in compatible_devices.iter().enumerate() {
+        info!("  Device {}: {} ({})", i, device.name, format!("{:?}", device.device_type));
+    }
+    
+    // Create telemetry channel
+    let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<Telemetry>();
+    
+    // Create process supervisor
+    let mut supervisor = ProcessSupervisor::new(
+        config.clone(),
+        adapter.clone(),
+        binary_path,
+        device_ids,
+    );
+    
+    println!("\n🚀 Starting mining process...");
+    
+    // Start the mining process
+    supervisor.start(telemetry_tx).await?;
+    
+    println!("✅ Mining started successfully!");
+    println!("  Coin: {}", config.mining.active_coin);
+    println!("  Pool: {}", config.get_active_pool()?.url);
+    println!("  Wallet: {}...{}", 
+             &config.get_active_wallet()?.address[..8], 
+             &config.get_active_wallet()?.address[config.get_active_wallet()?.address.len()-8..]);
+    println!("  Miner: {}", adapter.get_name());
+    println!("  Devices: {}", compatible_devices.len());
+    
+    println!("\n📊 Real-time telemetry:");
+    println!("========================");
+    
+    // Set up telemetry display and supervision
+    let supervision_handle = tokio::spawn(async move {
+        supervisor.supervise().await
+    });
+    
+    let telemetry_handle = tokio::spawn(async move {
+        let mut last_telemetry_time = std::time::Instant::now();
+        
+        while let Some(telemetry) = telemetry_rx.recv().await {
+            let now = std::time::Instant::now();
+            
+            // Only display telemetry every 10 seconds to avoid spam
+            if now.duration_since(last_telemetry_time) >= Duration::from_secs(10) {
+                print!("\r");
+                print!("Hashrate: {:.2} {} | Shares: A:{} R:{} | ", 
+                       telemetry.hashrate, 
+                       telemetry.hashrate_unit,
+                       telemetry.shares_accepted,
+                       telemetry.shares_rejected);
+                
+                if let Some(temp) = telemetry.temperature_c {
+                    print!("Temp: {:.1}°C | ", temp);
+                }
+                
+                if let Some(power) = telemetry.power_watts {
+                    print!("Power: {:.1}W", power);
+                }
+                
+                println!();
+                std::io::Write::flush(&mut std::io::stdout()).ok();
+                
+                last_telemetry_time = now;
+            }
+        }
+    });
+    
+    println!("\n💡 Press Ctrl+C to stop mining");
+    println!("   Mining will continue running in the background...");
+    
+    // Wait for Ctrl+C or process to finish
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            println!("\n\n🛑 Received shutdown signal...");
+            info!("Shutting down mining operation");
+            
+            // Cancel telemetry display
+            telemetry_handle.abort();
+            
+            // Wait for supervision to finish
+            if let Err(e) = timeout(Duration::from_secs(15), supervision_handle).await {
+                warn!("Timeout waiting for mining supervision to shut down: {}", e);
+            }
+            
+            println!("✅ Mining operation stopped");
+        }
+        result = supervision_handle => {
+            match result {
+                Ok(Ok(())) => {
+                    println!("\n✅ Mining supervision completed normally");
+                }
+                Ok(Err(e)) => {
+                    error!("Mining supervision error: {}", e);
+                    return Err(e.into());
+                }
+                Err(e) => {
+                    error!("Mining supervision task error: {}", e);
+                    return Err(e.into());
+                }
+            }
+        }
+    }
+    
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,7 +572,9 @@ mod tests {
         let cmd = Command::new("bunker-miner-daemon")
             .subcommand(Command::new("benchmark"))
             .subcommand(Command::new("list-devices"))
-            .subcommand(Command::new("show-profiles"));
+            .subcommand(Command::new("show-profiles"))
+            .subcommand(Command::new("start"))
+            .subcommand(Command::new("stop"));
 
         // Test benchmark subcommand
         let matches = cmd.clone().try_get_matches_from(vec!["bunker-miner-daemon", "benchmark"]);
@@ -421,5 +587,39 @@ mod tests {
         // Test show-profiles subcommand
         let matches = cmd.clone().try_get_matches_from(vec!["bunker-miner-daemon", "show-profiles"]);
         assert!(matches.is_ok());
+        
+        // Test start subcommand
+        let matches = cmd.clone().try_get_matches_from(vec!["bunker-miner-daemon", "start"]);
+        assert!(matches.is_ok());
+        
+        // Test stop subcommand
+        let matches = cmd.clone().try_get_matches_from(vec!["bunker-miner-daemon", "stop"]);
+        assert!(matches.is_ok());
+    }
+    
+    #[tokio::test]
+    async fn test_configuration_integration() {
+        // Test that ConfigManager can be created without errors
+        let config_manager = ConfigManager::new();
+        assert!(config_manager.is_ok(), "ConfigManager should initialize successfully");
+        
+        // Test that MinerManager can be created
+        let miner_manager = MinerManager::new();
+        assert!(miner_manager.is_ok(), "MinerManager should initialize successfully");
+        
+        // Test adapter selection
+        let manager = miner_manager.unwrap();
+        assert!(manager.get_adapter_for_coin("ethereum").is_some());
+        assert!(manager.get_adapter_for_coin("monero").is_some());
+        assert!(manager.get_adapter_for_coin("unsupported_coin").is_none());
+    }
+    
+    #[test]
+    fn test_telemetry_creation() {
+        let telemetry = Telemetry::default();
+        assert_eq!(telemetry.hashrate, 0.0);
+        assert_eq!(telemetry.shares_accepted, 0);
+        assert_eq!(telemetry.algorithm, "unknown");
+        assert!(telemetry.timestamp > 0);
     }
 }
