@@ -15,6 +15,7 @@ pub struct Config {
     pub wallets: HashMap<String, WalletConfig>,
     pub pools: HashMap<String, PoolConfig>,
     pub security: SecurityConfig,
+    pub grpc: GrpcConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,6 +54,19 @@ pub struct SecurityConfig {
     pub max_restart_delay_seconds: u64,
     pub telemetry_collection: bool,
     pub remote_access_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GrpcConfig {
+    pub enabled: bool,
+    pub bind_address: String,
+    pub port: u16,
+    pub tls_enabled: bool,
+    pub tls_cert_path: Option<String>,
+    pub tls_key_path: Option<String>,
+    pub max_connections: u32,
+    pub connection_timeout_seconds: u64,
+    pub request_timeout_seconds: u64,
 }
 
 impl Default for Config {
@@ -109,6 +123,17 @@ impl Default for Config {
                 max_restart_delay_seconds: 300,
                 telemetry_collection: true,
                 remote_access_enabled: false,
+            },
+            grpc: GrpcConfig {
+                enabled: true,
+                bind_address: "127.0.0.1".to_string(),
+                port: 50051,
+                tls_enabled: false,
+                tls_cert_path: None,
+                tls_key_path: None,
+                max_connections: 100,
+                connection_timeout_seconds: 30,
+                request_timeout_seconds: 60,
             },
         }
     }
@@ -346,6 +371,34 @@ impl ConfigManager {
         
         if config.security.max_restart_delay_seconds < config.security.restart_delay_seconds {
             return Err(anyhow!("max_restart_delay_seconds must be >= restart_delay_seconds"));
+        }
+        
+        // Validate gRPC settings
+        if config.grpc.port == 0 {
+            return Err(anyhow!("gRPC port must be greater than 0"));
+        }
+        
+        if config.grpc.max_connections == 0 {
+            return Err(anyhow!("gRPC max_connections must be greater than 0"));
+        }
+        
+        if config.grpc.connection_timeout_seconds == 0 {
+            return Err(anyhow!("gRPC connection_timeout_seconds must be greater than 0"));
+        }
+        
+        if config.grpc.request_timeout_seconds == 0 {
+            return Err(anyhow!("gRPC request_timeout_seconds must be greater than 0"));
+        }
+        
+        // Validate TLS configuration for remote access
+        if config.grpc.bind_address != "127.0.0.1" && config.grpc.bind_address != "localhost" {
+            if !config.grpc.tls_enabled {
+                return Err(anyhow!("TLS must be enabled for non-localhost gRPC binding"));
+            }
+            
+            if config.grpc.tls_cert_path.is_none() || config.grpc.tls_key_path.is_none() {
+                return Err(anyhow!("TLS cert and key paths must be specified for remote gRPC access"));
+            }
         }
         
         Ok(())

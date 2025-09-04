@@ -1,0 +1,48 @@
+[package]
+name = "bunker-miner-cli"
+version = "0.1.0"
+edition = "2021"
+authors = ["Emilian Cristea <emilian@bunkercorpo.com>"]
+description = "BUNKER MINER CLI - Command-line interface for the BUNKER MINER daemon"
+license = "MIT"
+repository = "https://github.com/emiliancristea/bunker-miner"
+keywords = ["mining", "cryptocurrency", "cli", "grpc"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+# Core async runtime
+tokio = { version = "1.0", features = ["full"] }
+
+# gRPC client implementation
+tonic = "0.10"
+tonic-build = "0.10"
+
+# Command line interface
+clap = { version = "4.0", features = ["derive"] }
+
+# Serialization for pretty output
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+
+# Async traits
+async-trait = "0.1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# Streaming support
+tokio-stream = "0.1"
+
+# Time utilities
+chrono = { version = "0.4", features = ["serde"] }
+
+[build-dependencies]
+tonic-build = "0.10"
+
+[[bin]]
+name = "bunker-miner-cli"
+path = "src/main.rs"

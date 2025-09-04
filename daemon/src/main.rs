@@ -3,6 +3,7 @@ mod benchmarking;
 mod profiles;
 mod config;
 mod miners;
+mod grpc;
 
 use clap::{Arg, Command};
 use std::process;
@@ -16,6 +17,7 @@ use benchmarking::BenchmarkingEngine;
 use profiles::ProfileManager;
 use config::ConfigManager;
 use miners::{MinerManager, ProcessSupervisor, Telemetry};
+use grpc::{DaemonState, GrpcServer};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -77,6 +79,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Command::new("status")
                 .about("Show current mining status")
         )
+        .subcommand(
+            Command::new("serve")
+                .about("Start the gRPC API server")
+        )
         .get_matches();
 
     // Handle health check
@@ -107,6 +113,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             info!("Checking mining status...");
             println!("BUNKER MINER Daemon - Status");
             println!("Status: Not mining (daemon initialized successfully)");
+        }
+        Some(("serve", _)) => {
+            serve_grpc_command().await?;
         }
         _ => {
             println!("BUNKER MINER Daemon v0.1.0");
@@ -533,6 +542,86 @@ async fn start_mining_command() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+async fn serve_grpc_command() -> Result<(), Box<dyn std::error::Error>> {
+    println!("BUNKER MINER Daemon - gRPC API Server");
+    println!("====================================");
+    
+    info!("Initializing daemon state...");
+    
+    // Initialize configuration manager
+    let mut config_manager = ConfigManager::new()?;
+    let config = config_manager.load_config().await?;
+    
+    info!("✓ Configuration loaded successfully");
+    
+    // Initialize hardware detector
+    let hardware_detector = HardwareDetector::new()?;
+    info!("✓ Hardware detector initialized");
+    
+    // Initialize miner manager
+    let miner_manager = MinerManager::new()?;
+    info!("✓ Miner manager initialized");
+    
+    // Create shared daemon state
+    let daemon_state = Arc::new(DaemonState::new(
+        config.clone(),
+        hardware_detector,
+        miner_manager,
+    ));
+    
+    info!("✓ Daemon state initialized");
+    
+    // Create gRPC server
+    let grpc_server = GrpcServer::new(daemon_state.clone(), config.grpc.clone());
+    
+    println!("\n🚀 Starting gRPC API server...");
+    println!("  Address: {}:{}", config.grpc.bind_address, config.grpc.port);
+    println!("  TLS: {}", if config.grpc.tls_enabled { "enabled" } else { "disabled" });
+    println!("  Max connections: {}", config.grpc.max_connections);
+    
+    if config.grpc.bind_address == "127.0.0.1" || config.grpc.bind_address == "localhost" {
+        println!("  🔒 Server bound to localhost only for security");
+    } else {
+        println!("  ⚠️  Server bound to all interfaces - ensure TLS is properly configured!");
+    }
+    
+    println!("\n💡 Available endpoints:");
+    println!("  - GetSystemInfo: Get system and device information");
+    println!("  - HealthCheck: Check daemon health status");
+    println!("  - StreamTelemetry: Subscribe to real-time mining telemetry");
+    println!("  - GetProfitability: Get profitability calculations");
+    println!("  - GetConfig/SetConfig: Configuration management");
+    println!("  - StartMining/StopMining: Mining operations control");
+    
+    println!("\n🔧 Use bunker-miner-cli to test the API:");
+    println!("  bunker-miner-cli info");
+    println!("  bunker-miner-cli watch");
+    
+    println!("\n💡 Press Ctrl+C to stop the server");
+    
+    // Start the gRPC server
+    tokio::select! {
+        result = grpc_server.start() => {
+            match result {
+                Ok(()) => {
+                    info!("gRPC server shut down normally");
+                }
+                Err(e) => {
+                    error!("gRPC server error: {}", e);
+                    return Err(e.into());
+                }
+            }
+        }
+        _ = tokio::signal::ctrl_c() => {
+            println!("\n\n🛑 Received shutdown signal...");
+            info!("Shutting down gRPC server");
+            println!("✅ gRPC server stopped");
+        }
+    }
+    
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -621,5 +710,64 @@ mod tests {
         assert_eq!(telemetry.shares_accepted, 0);
         assert_eq!(telemetry.algorithm, "unknown");
         assert!(telemetry.timestamp > 0);
+    }
+    
+    #[tokio::test]
+    async fn test_grpc_server_initialization() {
+        // Test that all components can be initialized for gRPC server
+        let config_manager = ConfigManager::new();
+        assert!(config_manager.is_ok(), "ConfigManager should initialize for gRPC");
+        
+        let hardware_detector = HardwareDetector::new();
+        assert!(hardware_detector.is_ok(), "HardwareDetector should initialize for gRPC");
+        
+        let miner_manager = MinerManager::new();
+        assert!(miner_manager.is_ok(), "MinerManager should initialize for gRPC");
+        
+        if let (Ok(config_mgr), Ok(hw_detector), Ok(miner_mgr)) = 
+            (config_manager, hardware_detector, miner_manager) {
+            
+            let config = config::Config::default();
+            let daemon_state = std::sync::Arc::new(grpc::DaemonState::new(
+                config.clone(),
+                hw_detector,
+                miner_mgr,
+            ));
+            
+            assert_eq!(daemon_state.daemon_version, env!("CARGO_PKG_VERSION"));
+            assert_eq!(daemon_state.api_version, "0.1.0");
+            
+            // Test telemetry broadcaster
+            let test_telemetry = Telemetry::default();
+            daemon_state.telemetry_broadcaster.broadcast(test_telemetry);
+            
+            // Should have no subscribers initially
+            assert_eq!(daemon_state.telemetry_broadcaster.subscriber_count(), 0);
+        }
+    }
+    
+    #[test]
+    fn test_grpc_config_validation() {
+        let mut config = config::Config::default();
+        
+        // Test valid gRPC config
+        assert!(config.grpc.enabled);
+        assert_eq!(config.grpc.bind_address, "127.0.0.1");
+        assert_eq!(config.grpc.port, 50051);
+        
+        // Test invalid configs
+        config.grpc.port = 0;
+        let config_manager = ConfigManager::new().unwrap();
+        assert!(config_manager.validate_config(&config).is_err());
+        
+        // Reset and test remote access validation
+        config.grpc.port = 50051;
+        config.grpc.bind_address = "0.0.0.0".to_string();
+        assert!(config_manager.validate_config(&config).is_err()); // Should fail without TLS
+        
+        config.grpc.tls_enabled = true;
+        config.grpc.tls_cert_path = Some("/path/to/cert.pem".to_string());
+        config.grpc.tls_key_path = Some("/path/to/key.pem".to_string());
+        assert!(config_manager.validate_config(&config).is_err()); // Should still fail due to wallet validation
     }
 }
