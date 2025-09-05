@@ -289,6 +289,43 @@ impl HardwareDetector {
         Ok(metrics)
     }
 
+    /// Static version of get_nvidia_metrics to avoid borrowing issues
+    fn get_nvidia_metrics_static(device: &nvml_wrapper::Device) -> Result<DeviceMetrics> {
+        let mut metrics = DeviceMetrics::default();
+
+        // Temperature
+        if let Ok(temp) = device.temperature(nvml_wrapper::enum_wrappers::device::TemperatureSensor::Gpu) {
+            metrics.temperature_c = Some(temp as f32);
+        }
+
+        // Power consumption
+        if let Ok(power) = device.power_usage() {
+            metrics.power_watts = Some(power as f32 / 1000.0); // Convert mW to W
+        }
+
+        // GPU utilization
+        if let Ok(utilization) = device.utilization_rates() {
+            metrics.utilization_percent = Some(utilization.gpu as f32);
+            metrics.memory_utilization_percent = Some(utilization.memory as f32);
+        }
+
+        // Fan speed
+        if let Ok(fan_speed) = device.fan_speed(0) {
+            metrics.fan_speed_percent = Some(fan_speed as f32);
+        }
+
+        // Clock speeds
+        if let Ok(graphics_clock) = device.clock_info(nvml_wrapper::enum_wrappers::device::Clock::Graphics) {
+            metrics.core_clock_mhz = Some(graphics_clock);
+        }
+
+        if let Ok(memory_clock) = device.clock_info(nvml_wrapper::enum_wrappers::device::Clock::Memory) {
+            metrics.memory_clock_mhz = Some(memory_clock);
+        }
+
+        Ok(metrics)
+    }
+
     /// Get supported algorithms for NVIDIA GPUs
     fn get_nvidia_supported_algorithms(&self) -> Vec<String> {
         vec![
@@ -342,7 +379,7 @@ impl HardwareDetector {
     }
 
     /// Parse rocm-smi JSON output
-    fn parse_rocm_smi_output(&mut self, output: &str) -> Result<Vec<MiningDevice>> {
+    fn parse_rocm_smi_output(&mut self, _output: &str) -> Result<Vec<MiningDevice>> {
         // This is a simplified parser - in production, we would use proper JSON parsing
         // For now, return empty vec as AMD detection is secondary priority
         debug!("rocm-smi output parsing not yet fully implemented");
@@ -492,7 +529,7 @@ impl HardwareDetector {
                             if let Some(index_str) = device.id.strip_prefix("nvidia_gpu_") {
                                 if let Ok(index) = index_str.parse::<u32>() {
                                     if let Ok(nvml_device) = nvml.device_by_index(index) {
-                                        device.metrics = self.get_nvidia_metrics(&nvml_device)?;
+                                        device.metrics = Self::get_nvidia_metrics_static(&nvml_device)?;
                                     }
                                 }
                             }

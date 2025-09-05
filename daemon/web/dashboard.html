@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BUNKER MINER - Web Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3c72, #2a5298);
+            color: #ffffff;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        .header {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 1rem 2rem;
+            border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(45deg, #ffcc33, #ff6b6b);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            text-align: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .header p {
+            text-align: center;
+            opacity: 0.8;
+            font-size: 1.1rem;
+        }
+
+        .dashboard {
+            padding: 2rem;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 1.5rem;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 1.5rem;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(0, 0, 0, 0.2);
+            border-color: rgba(255, 255, 255, 0.3);
+        }
+
+        .card-title {
+            font-size: 1.4rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .card-title .icon {
+            font-size: 1.8rem;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-left: 0.5rem;
+            animation: pulse 2s infinite;
+        }
+
+        .status-connected {
+            background-color: #4ade80;
+        }
+
+        .status-disconnected {
+            background-color: #f87171;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .metric-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.7rem 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .metric-row:last-child {
+            border-bottom: none;
+        }
+
+        .metric-label {
+            font-weight: 500;
+            opacity: 0.8;
+        }
+
+        .metric-value {
+            font-weight: 700;
+            font-size: 1.1rem;
+        }
+
+        .metric-value.positive {
+            color: #4ade80;
+        }
+
+        .metric-value.negative {
+            color: #f87171;
+        }
+
+        .metric-value.warning {
+            color: #fbbf24;
+        }
+
+        .connection-status {
+            text-align: center;
+            padding: 2rem;
+            font-size: 1.2rem;
+        }
+
+        .loading {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top: 2px solid #ffffff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .footer {
+            text-align: center;
+            padding: 2rem;
+            opacity: 0.6;
+            font-size: 0.9rem;
+        }
+
+        .error {
+            background: rgba(248, 113, 113, 0.2);
+            border: 1px solid rgba(248, 113, 113, 0.5);
+            color: #fecaca;
+            padding: 1rem;
+            border-radius: 8px;
+            margin: 1rem 0;
+        }
+
+        @media (max-width: 768px) {
+            .dashboard {
+                grid-template-columns: 1fr;
+                padding: 1rem;
+            }
+            
+            .header {
+                padding: 1rem;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>💎 BUNKER MINER</h1>
+        <p>Real-Time Mining Dashboard</p>
+    </div>
+
+    <div id="connectionStatus" class="connection-status">
+        <div class="loading">
+            <div class="spinner"></div>
+            <span>Connecting to daemon...</span>
+        </div>
+    </div>
+
+    <div class="dashboard" id="dashboard" style="display: none;">
+        <div class="card">
+            <div class="card-title">
+                <span class="icon">📊</span>
+                System Status
+                <span id="systemStatusIndicator" class="status-indicator status-disconnected"></span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Daemon Version</span>
+                <span id="daemonVersion" class="metric-value">-</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Uptime</span>
+                <span id="uptime" class="metric-value">-</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">WebSocket Status</span>
+                <span id="wsStatus" class="metric-value">-</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Last Update</span>
+                <span id="lastUpdate" class="metric-value">-</span>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                <span class="icon">⚡</span>
+                Mining Performance
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Algorithm</span>
+                <span id="algorithm" class="metric-value">-</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Hashrate</span>
+                <span id="hashrate" class="metric-value">-</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Accepted Shares</span>
+                <span id="sharesAccepted" class="metric-value positive">-</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Rejected Shares</span>
+                <span id="sharesRejected" class="metric-value negative">-</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Acceptance Rate</span>
+                <span id="acceptanceRate" class="metric-value">-</span>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                <span class="icon">🌡️</span>
+                Hardware Monitoring
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">GPU Temperature</span>
+                <span id="temperature" class="metric-value">-</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Power Draw</span>
+                <span id="power" class="metric-value">-</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Fan Speed</span>
+                <span id="fanSpeed" class="metric-value">-</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Device ID</span>
+                <span id="deviceId" class="metric-value">-</span>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                <span class="icon">📈</span>
+                Statistics
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Session Duration</span>
+                <span id="sessionDuration" class="metric-value">-</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Total Shares</span>
+                <span id="totalShares" class="metric-value">-</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Average Hashrate</span>
+                <span id="avgHashrate" class="metric-value">-</span>
+            </div>
+            <div class="metric-row">
+                <span class="metric-label">Messages Received</span>
+                <span id="messagesReceived" class="metric-value">-</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>🤖 BUNKER MINER Web Dashboard | Powered by Rust + WebSockets | Phase 2.4</p>
+    </div>
+
+    <script>
+        class BunkerMinerDashboard {
+            constructor() {
+                this.ws = null;
+                this.isConnected = false;
+                this.reconnectAttempts = 0;
+                this.maxReconnectAttempts = 10;
+                this.reconnectDelay = 2000;
+                this.messagesReceived = 0;
+                this.sessionStart = Date.now();
+                this.hashrateSamples = [];
+                this.maxSamples = 60; // Keep 1 minute of samples
+                
+                this.elements = {
+                    connectionStatus: document.getElementById('connectionStatus'),
+                    dashboard: document.getElementById('dashboard'),
+                    systemStatusIndicator: document.getElementById('systemStatusIndicator'),
+                    daemonVersion: document.getElementById('daemonVersion'),
+                    uptime: document.getElementById('uptime'),
+                    wsStatus: document.getElementById('wsStatus'),
+                    lastUpdate: document.getElementById('lastUpdate'),
+                    algorithm: document.getElementById('algorithm'),
+                    hashrate: document.getElementById('hashrate'),
+                    sharesAccepted: document.getElementById('sharesAccepted'),
+                    sharesRejected: document.getElementById('sharesRejected'),
+                    acceptanceRate: document.getElementById('acceptanceRate'),
+                    temperature: document.getElementById('temperature'),
+                    power: document.getElementById('power'),
+                    fanSpeed: document.getElementById('fanSpeed'),
+                    deviceId: document.getElementById('deviceId'),
+                    sessionDuration: document.getElementById('sessionDuration'),
+                    totalShares: document.getElementById('totalShares'),
+                    avgHashrate: document.getElementById('avgHashrate'),
+                    messagesReceived: document.getElementById('messagesReceived')
+                };
+                
+                this.init();
+            }
+            
+            init() {
+                this.connect();
+                this.startStatsUpdater();
+                
+                // Handle page visibility changes
+                document.addEventListener('visibilitychange', () => {
+                    if (!document.hidden && !this.isConnected) {
+                        this.connect();
+                    }
+                });
+            }
+            
+            connect() {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/ws`;
+                
+                try {
+                    this.ws = new WebSocket(wsUrl);
+                    
+                    this.ws.onopen = () => {
+                        console.log('WebSocket connected');
+                        this.onConnected();
+                    };
+                    
+                    this.ws.onmessage = (event) => {
+                        try {
+                            const message = JSON.parse(event.data);
+                            this.handleMessage(message);
+                        } catch (error) {
+                            console.error('Error parsing WebSocket message:', error);
+                        }
+                    };
+                    
+                    this.ws.onclose = () => {
+                        console.log('WebSocket disconnected');
+                        this.onDisconnected();
+                    };
+                    
+                    this.ws.onerror = (error) => {
+                        console.error('WebSocket error:', error);
+                        this.onError(error);
+                    };
+                    
+                } catch (error) {
+                    console.error('Failed to create WebSocket:', error);
+                    this.onError(error);
+                }
+            }
+            
+            onConnected() {
+                this.isConnected = true;
+                this.reconnectAttempts = 0;
+                
+                this.elements.connectionStatus.style.display = 'none';
+                this.elements.dashboard.style.display = 'grid';
+                this.elements.systemStatusIndicator.className = 'status-indicator status-connected';
+                this.elements.wsStatus.textContent = 'Connected';
+                this.elements.wsStatus.className = 'metric-value positive';
+            }
+            
+            onDisconnected() {
+                this.isConnected = false;
+                this.elements.systemStatusIndicator.className = 'status-indicator status-disconnected';
+                this.elements.wsStatus.textContent = 'Disconnected';
+                this.elements.wsStatus.className = 'metric-value negative';
+                
+                // Try to reconnect
+                if (this.reconnectAttempts < this.maxReconnectAttempts) {
+                    this.reconnectAttempts++;
+                    console.log(`Reconnecting... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+                    setTimeout(() => this.connect(), this.reconnectDelay * this.reconnectAttempts);
+                } else {
+                    this.showError('Connection failed. Please refresh the page.');
+                }
+            }
+            
+            onError(error) {
+                console.error('Connection error:', error);
+                this.elements.wsStatus.textContent = 'Error';
+                this.elements.wsStatus.className = 'metric-value negative';
+            }
+            
+            handleMessage(message) {
+                this.messagesReceived++;
+                
+                if (message.type === 'telemetry') {
+                    this.updateTelemetry(message.data);
+                }
+                
+                this.elements.lastUpdate.textContent = new Date().toLocaleTimeString();
+            }
+            
+            updateTelemetry(data) {
+                // Mining performance
+                this.elements.algorithm.textContent = data.algorithm || '-';
+                this.elements.hashrate.textContent = this.formatHashrate(data.hashrate_mhs || 0);
+                this.elements.sharesAccepted.textContent = data.shares_accepted || 0;
+                this.elements.sharesRejected.textContent = data.shares_rejected || 0;
+                
+                // Calculate acceptance rate
+                const totalShares = (data.shares_accepted || 0) + (data.shares_rejected || 0);
+                const acceptanceRate = totalShares > 0 ? (data.shares_accepted / totalShares * 100) : 0;
+                this.elements.acceptanceRate.textContent = `${acceptanceRate.toFixed(1)}%`;
+                this.elements.acceptanceRate.className = acceptanceRate >= 95 ? 'metric-value positive' : 
+                                                       acceptanceRate >= 90 ? 'metric-value warning' : 'metric-value negative';
+                
+                // Hardware monitoring
+                this.elements.temperature.textContent = data.temperature_celsius ? `${data.temperature_celsius.toFixed(1)}°C` : '-';
+                this.elements.power.textContent = data.power_watts ? `${data.power_watts.toFixed(0)}W` : '-';
+                this.elements.fanSpeed.textContent = data.fan_speed_percent ? `${data.fan_speed_percent.toFixed(0)}%` : '-';
+                this.elements.deviceId.textContent = data.device_id || '-';
+                
+                // Update temperature color coding
+                if (data.temperature_celsius) {
+                    if (data.temperature_celsius >= 85) {
+                        this.elements.temperature.className = 'metric-value negative';
+                    } else if (data.temperature_celsius >= 75) {
+                        this.elements.temperature.className = 'metric-value warning';
+                    } else {
+                        this.elements.temperature.className = 'metric-value positive';
+                    }
+                }
+                
+                // Update hashrate samples for average calculation
+                if (data.hashrate_mhs) {
+                    this.hashrateSamples.push(data.hashrate_mhs);
+                    if (this.hashrateSamples.length > this.maxSamples) {
+                        this.hashrateSamples.shift();
+                    }
+                }
+            }
+            
+            formatHashrate(hashrateMhs) {
+                if (hashrateMhs >= 1000) {
+                    return `${(hashrateMhs / 1000).toFixed(2)} GH/s`;
+                } else if (hashrateMhs >= 1) {
+                    return `${hashrateMhs.toFixed(2)} MH/s`;
+                } else if (hashrateMhs >= 0.001) {
+                    return `${(hashrateMhs * 1000).toFixed(2)} KH/s`;
+                } else {
+                    return `${(hashrateMhs * 1000000).toFixed(0)} H/s`;
+                }
+            }
+            
+            formatDuration(seconds) {
+                const hours = Math.floor(seconds / 3600);
+                const minutes = Math.floor((seconds % 3600) / 60);
+                const secs = seconds % 60;
+                
+                if (hours > 0) {
+                    return `${hours}h ${minutes}m ${secs}s`;
+                } else if (minutes > 0) {
+                    return `${minutes}m ${secs}s`;
+                } else {
+                    return `${secs}s`;
+                }
+            }
+            
+            startStatsUpdater() {
+                setInterval(() => {
+                    // Update session duration
+                    const sessionDuration = Math.floor((Date.now() - this.sessionStart) / 1000);
+                    this.elements.sessionDuration.textContent = this.formatDuration(sessionDuration);
+                    
+                    // Update total shares (sum of accepted + rejected)
+                    const accepted = parseInt(this.elements.sharesAccepted.textContent) || 0;
+                    const rejected = parseInt(this.elements.sharesRejected.textContent) || 0;
+                    this.elements.totalShares.textContent = accepted + rejected;
+                    
+                    // Update average hashrate
+                    if (this.hashrateSamples.length > 0) {
+                        const avgHashrate = this.hashrateSamples.reduce((a, b) => a + b) / this.hashrateSamples.length;
+                        this.elements.avgHashrate.textContent = this.formatHashrate(avgHashrate);
+                    }
+                    
+                    // Update messages received
+                    this.elements.messagesReceived.textContent = this.messagesReceived;
+                    
+                    // Update daemon version (placeholder - would come from server status)
+                    this.elements.daemonVersion.textContent = 'v0.1.0';
+                    
+                    // Update uptime (placeholder - would come from daemon)
+                    this.elements.uptime.textContent = this.formatDuration(sessionDuration);
+                    
+                }, 1000);
+            }
+            
+            showError(message) {
+                this.elements.connectionStatus.innerHTML = `
+                    <div class="error">
+                        <strong>Connection Error:</strong> ${message}
+                    </div>
+                `;
+                this.elements.dashboard.style.display = 'none';
+                this.elements.connectionStatus.style.display = 'block';
+            }
+        }
+        
+        // Initialize dashboard when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new BunkerMinerDashboard();
+        });
+    </script>
+</body>
+</html>

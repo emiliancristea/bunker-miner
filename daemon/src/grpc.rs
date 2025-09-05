@@ -11,14 +11,14 @@ use sysinfo::System;
 
 use crate::config::{Config, GrpcConfig};
 use crate::hardware::{HardwareDetector, MiningDevice};
-use crate::miners::{MinerManager, ProcessSupervisor, Telemetry};
+use crate::miners::{MinerManager, ProcessSupervisor, Telemetry as MinerTelemetry};
 use crate::profit_engine::ProfitEngineService;
 
 // Include the generated gRPC code
 include!("generated/bunker.daemon.v1.rs");
 
 use bunker_miner_daemon_server::{BunkerMinerDaemon, BunkerMinerDaemonServer};
-use google::protobuf::{Empty, Timestamp};
+use prost_types::{Timestamp};
 
 // Type aliases for better readability
 type TelemetryStream = Pin<Box<dyn Stream<Item = Result<Telemetry, Status>> + Send>>;
@@ -484,7 +484,7 @@ fn convert_mining_device_to_device_info(device: MiningDevice) -> DeviceInfo {
     }
 }
 
-fn convert_telemetry_to_grpc(telemetry: crate::miners::Telemetry) -> Telemetry {
+fn convert_telemetry_to_grpc(telemetry: MinerTelemetry) -> Telemetry {
     Telemetry {
         device_id: "device_0".to_string(), // TODO: Map actual device ID
         timestamp: Some(Timestamp {
@@ -512,10 +512,10 @@ fn convert_telemetry_to_grpc(telemetry: crate::miners::Telemetry) -> Telemetry {
             avg_share_time_seconds: 0.0, // TODO: Calculate share timing
             last_share_time: None, // TODO: Track last share time
         }),
-        device_status: telemetry::DeviceStatus::DeviceStatusMining as i32,
-        error_message: "".to_string(),
-        pool_status: telemetry::PoolStatus::PoolStatusConnected as i32,
-        pool_url: "".to_string(), // TODO: Get pool URL from mining config
+        device_status: telemetry::DeviceStatus::Mining as i32,
+        error_message: telemetry.error_message.clone(),
+        pool_status: telemetry.pool_status,
+        pool_url: telemetry.pool_url.clone()
     }
 }
 

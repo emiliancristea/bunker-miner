@@ -6,7 +6,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use dirs::config_dir;
-use rpassword::rpassword;
+use rpassword;
 use secrecy::{ExposeSecret, Secret};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +100,39 @@ impl Default for Config {
         });
 
         let mut pools = HashMap::new();
+        
+        // BUNKER POOL - Our proprietary mining pool (highest priority)
+        pools.insert("bunker_pool_btc".to_string(), PoolConfig {
+            coin: "bitcoin".to_string(),
+            url: "stratum+tcp://pool.bunkerminer.com".to_string(),
+            port: 3333,
+            username: None,
+            worker_name: Some("bunker-miner".to_string()),
+            ssl: true,
+            priority: 10, // Highest priority
+        });
+        
+        pools.insert("bunker_pool_eth".to_string(), PoolConfig {
+            coin: "ethereum".to_string(),
+            url: "stratum+tcp://pool.bunkerminer.com".to_string(),
+            port: 3334,
+            username: None,
+            worker_name: Some("bunker-miner".to_string()),
+            ssl: true,
+            priority: 10, // Highest priority
+        });
+        
+        pools.insert("bunker_pool_xmr".to_string(), PoolConfig {
+            coin: "monero".to_string(),
+            url: "stratum+tcp://pool.bunkerminer.com".to_string(),
+            port: 3335,
+            username: None,
+            worker_name: Some("bunker-miner".to_string()),
+            ssl: true,
+            priority: 10, // Highest priority
+        });
+        
+        // External pools as backups (lower priority)
         pools.insert("ethermine".to_string(), PoolConfig {
             coin: "ethereum".to_string(),
             url: "stratum1+tcp://eth-us-east1.nanopool.org".to_string(),
@@ -107,7 +140,7 @@ impl Default for Config {
             username: None,
             worker_name: Some("bunker-miner".to_string()),
             ssl: false,
-            priority: 1,
+            priority: 1, // Lower priority backup
         });
         
         pools.insert("minexmr".to_string(), PoolConfig {
@@ -117,17 +150,17 @@ impl Default for Config {
             username: None,
             worker_name: Some("bunker-miner".to_string()),
             ssl: false,
-            priority: 1,
+            priority: 1, // Lower priority backup
         });
 
         Config {
             mining: MiningConfig {
                 active_coin: "ethereum".to_string(),
                 active_wallet: "ethereum_main".to_string(),
-                active_pool: "ethermine".to_string(),
-                auto_switch: false,
+                active_pool: "bunker_pool_eth".to_string(), // Default to our pool
+                auto_switch: true, // Enable profit switching by default
                 profit_switch_interval_minutes: 10,
-                backup_pools: vec!["ethermine".to_string()],
+                backup_pools: vec!["bunker_pool_eth".to_string(), "ethermine".to_string()],
             },
             wallets,
             pools,
@@ -151,13 +184,13 @@ impl Default for Config {
                 request_timeout_seconds: 60,
             },
             profit_switching: ProfitSwitchingConfig {
-                enable: false,
+                enable: true, // Enable by default to leverage our pool
                 electricity_eur_per_kwh: 0.15,
-                profit_delta_threshold: 5.0,
+                profit_delta_threshold: 3.0, // Lower threshold for more responsive switching
                 min_dwell_time_minutes: 10,
                 update_interval_minutes: Some(5),
-                pool_fee_percent: Some(1.0),
-                enabled_algorithms: vec!["RandomX".to_string(), "Ethash".to_string()],
+                pool_fee_percent: Some(0.5), // Effective 50% lower fee for BUNKER POOL
+                enabled_algorithms: vec!["RandomX".to_string(), "Ethash".to_string(), "SHA256".to_string(), "Scrypt".to_string()],
                 disabled_algorithms: vec![],
                 #[cfg(feature = "proxy")]
                 proxy_url: None,
@@ -290,7 +323,7 @@ impl ConfigManager {
         std::io::stdout().flush()
             .context("Failed to flush stdout")?;
         
-        let password = rpassword()
+        let password = rpassword::read_password()
             .context("Failed to read password")?;
         
         if password.is_empty() {

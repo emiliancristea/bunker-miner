@@ -7,6 +7,19 @@ use reqwest::Client;
 use crate::config::Config;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BunkerPoolStats {
+    pub algorithm: String,
+    pub current_hashrate: f64,
+    pub pool_fee_percent: f64,
+    pub minimum_payout: f64,
+    pub effective_fee_percent: f64, // Special reduced fee for BUNKER MINER users
+    pub last_block_time: u64,
+    pub active_miners: u32,
+    pub network_difficulty: f64,
+    pub pool_luck_24h: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoinPrice {
     pub symbol: String,
     pub price_eur: f64,
@@ -55,6 +68,7 @@ pub struct ProfitEngine {
     http_client: Client,
     coin_prices: HashMap<String, CoinPrice>,
     network_stats: HashMap<String, NetworkStats>,
+    bunker_pool_stats: HashMap<String, BunkerPoolStats>,
     algorithm_profiles: Vec<AlgorithmProfile>,
     current_algorithm: Option<String>,
     last_switch_time: SystemTime,
@@ -66,7 +80,7 @@ pub struct ProfitEngine {
 
 impl ProfitEngine {
     pub fn new(config: &Config) -> Self {
-        let mut client_builder = Client::builder()
+        let client_builder = Client::builder()
             .timeout(Duration::from_secs(30))
             .user_agent("BUNKER-MINER/0.1.0");
 
@@ -81,6 +95,7 @@ impl ProfitEngine {
             http_client: client_builder.build().unwrap_or_else(|_| Client::new()),
             coin_prices: HashMap::new(),
             network_stats: HashMap::new(),
+            bunker_pool_stats: HashMap::new(),
             algorithm_profiles: Vec::new(),
             current_algorithm: None,
             last_switch_time: UNIX_EPOCH,
@@ -121,12 +136,20 @@ impl ProfitEngine {
 
         let prices_result = self.fetch_coin_prices(&coin_symbols).await;
         let network_result = self.fetch_network_stats().await;
+        let bunker_pool_result = self.fetch_bunker_pool_stats().await;
 
-        match (prices_result, network_result) {
-            (Ok(prices), Ok(stats)) => {
+        match (prices_result, network_result, bunker_pool_result) {
+            (Ok(prices), Ok(stats), Ok(bunker_stats)) => {
                 self.coin_prices = prices;
                 self.network_stats = stats;
-                tracing::info!("Market data refreshed successfully");
+                self.bunker_pool_stats = bunker_stats;
+                tracing::info!("Market data refreshed successfully (including BUNKER POOL stats)");
+            }
+            (Ok(prices), Ok(stats), Err(bunker_err)) => {
+                self.coin_prices = prices;
+                self.network_stats = stats;
+                tracing::warn!("BUNKER POOL stats unavailable: {}, using fallback", bunker_err);
+                tracing::info!("Market data refreshed successfully (external sources only)");
             }
             (Err(price_err), Ok(_)) => {
                 tracing::warn!("Failed to fetch coin prices: {}", price_err);
@@ -323,6 +346,110 @@ impl ProfitEngine {
         })
     }
 
+    async fn fetch_bunker_pool_stats(&self) -> Result<HashMap<String, BunkerPoolStats>> {
+        let mut stats = HashMap::new();
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Fetch stats for each supported algorithm from BUNKER POOL API
+        let algorithms = vec!["SHA256", "Ethash", "RandomX", "Scrypt"];
+        
+        for algorithm in algorithms {
+            match self.fetch_single_bunker_pool_stats(algorithm).await {
+                Ok(pool_stats) => {
+                    stats.insert(algorithm.to_string(), pool_stats);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to fetch BUNKER POOL stats for {}: {}", algorithm, e);
+                    // Create fallback stats with preferential treatment for BUNKER POOL
+                    stats.insert(algorithm.to_string(), BunkerPoolStats {
+                        algorithm: algorithm.to_string(),
+                        current_hashrate: 0.0,
+                        pool_fee_percent: 1.0,
+                        minimum_payout: 0.1,
+                        effective_fee_percent: 0.5, // 50% lower effective fee
+                        last_block_time: current_time,
+                        active_miners: 0,
+                        network_difficulty: 1000000.0,
+                        pool_luck_24h: 100.0,
+                    });
+                }
+            }
+        }
+
+        Ok(stats)
+    }
+
+    async fn fetch_single_bunker_pool_stats(&self, algorithm: &str) -> Result<BunkerPoolStats> {
+        let url = format!("https://api.bunkerminer.com/pool/stats/{}", algorithm.to_lowercase());
+        
+        tracing::debug!("Fetching BUNKER POOL stats from: {}", url);
+
+        let response = self.http_client
+            .get(&url)
+            .header("User-Agent", "BUNKER-MINER-DAEMON/0.1.0")
+            .header("X-Client-Type", "bunker-miner")
+            .send()
+            .await
+            .context("Failed to fetch BUNKER POOL stats")?;
+
+        if !response.status().is_success() {
+            return Err(anyhow::anyhow!(
+                "BUNKER POOL API returned error status: {}",
+                response.status()
+            ));
+        }
+
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .context("Failed to parse BUNKER POOL response")?;
+
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        Ok(BunkerPoolStats {
+            algorithm: algorithm.to_string(),
+            current_hashrate: json
+                .get("hashrate")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0),
+            pool_fee_percent: json
+                .get("fee_percent")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(1.0),
+            minimum_payout: json
+                .get("minimum_payout")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.1),
+            effective_fee_percent: json
+                .get("effective_fee_percent")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.5), // Special reduced rate for BUNKER MINER
+            last_block_time: json
+                .get("last_block_time")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(current_time),
+            active_miners: json
+                .get("active_miners")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32)
+                .unwrap_or(0),
+            network_difficulty: json
+                .get("network_difficulty")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(1000000.0),
+            pool_luck_24h: json
+                .get("luck_24h")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(100.0),
+        })
+    }
+
     pub fn calculate_profitability(&self) -> Vec<ProfitabilityData> {
         let mut results = Vec::new();
         let current_time = SystemTime::now()
@@ -342,12 +469,23 @@ impl ProfitEngine {
     fn calculate_net_profit(&self, profile: &AlgorithmProfile, timestamp: u64) -> ProfitabilityData {
         let coin_price = self.coin_prices.get(&profile.coin_symbol);
         let network_stats = self.network_stats.get(&profile.name);
+        let bunker_pool_stats = self.bunker_pool_stats.get(&profile.name);
 
         let (revenue_per_day, cost_per_day, net_profit_per_day) = match (coin_price, network_stats) {
             (Some(price), Some(stats)) => {
                 let revenue = (profile.hashrate_hs * stats.block_reward * price.price_eur) / stats.network_difficulty;
                 let cost = (profile.power_watts / 1000.0) * 24.0 * self.electricity_rate_eur_per_kwh;
-                let net_profit = (revenue * (1.0 - self.pool_fee_percent / 100.0)) - cost;
+                
+                // Use BUNKER POOL's effective fee if available (preferential treatment)
+                let effective_fee_percent = if let Some(bunker_stats) = bunker_pool_stats {
+                    tracing::debug!("Using BUNKER POOL effective fee of {}% for {} (vs standard {}%)", 
+                                  bunker_stats.effective_fee_percent, profile.name, self.pool_fee_percent);
+                    bunker_stats.effective_fee_percent
+                } else {
+                    self.pool_fee_percent
+                };
+                
+                let net_profit = (revenue * (1.0 - effective_fee_percent / 100.0)) - cost;
                 (revenue, cost, net_profit)
             }
             _ => {
@@ -470,9 +608,32 @@ impl ProfitEngine {
     }
 
     pub fn set_current_algorithm(&mut self, algorithm: Option<String>) {
-        self.current_algorithm = algorithm;
         if algorithm.is_some() {
             self.last_switch_time = SystemTime::now();
+        }
+        self.current_algorithm = algorithm;
+    }
+
+    /// Get BUNKER POOL statistics for client display
+    pub fn get_bunker_pool_stats(&self) -> &HashMap<String, BunkerPoolStats> {
+        &self.bunker_pool_stats
+    }
+
+    /// Check if BUNKER POOL has preferential rates for a given algorithm
+    pub fn has_bunker_pool_advantage(&self, algorithm: &str) -> bool {
+        if let Some(bunker_stats) = self.bunker_pool_stats.get(algorithm) {
+            bunker_stats.effective_fee_percent < self.pool_fee_percent
+        } else {
+            false
+        }
+    }
+
+    /// Get the effective fee percentage for an algorithm (prioritizing BUNKER POOL)
+    pub fn get_effective_fee_percent(&self, algorithm: &str) -> f64 {
+        if let Some(bunker_stats) = self.bunker_pool_stats.get(algorithm) {
+            bunker_stats.effective_fee_percent
+        } else {
+            self.pool_fee_percent
         }
     }
 }
@@ -553,5 +714,17 @@ impl ProfitEngineService {
     pub async fn get_current_algorithm(&self) -> Option<String> {
         let engine = self.profit_engine.lock().await;
         engine.get_current_algorithm().cloned()
+    }
+
+    /// Get BUNKER POOL statistics for client display
+    pub async fn get_bunker_pool_stats(&self) -> HashMap<String, BunkerPoolStats> {
+        let engine = self.profit_engine.lock().await;
+        engine.get_bunker_pool_stats().clone()
+    }
+
+    /// Check if BUNKER POOL offers better rates for an algorithm
+    pub async fn has_bunker_pool_advantage(&self, algorithm: &str) -> bool {
+        let engine = self.profit_engine.lock().await;
+        engine.has_bunker_pool_advantage(algorithm)
     }
 }

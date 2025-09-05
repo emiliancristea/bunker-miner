@@ -80,6 +80,20 @@ public:
         QString buildTimestamp;
         QString gitCommit;
     };
+    
+    // Profitability information structure (Phase 2.4)
+    struct ProfitabilityInfo {
+        QString algorithm;
+        QString coin;
+        double revenueEurPerDay;
+        double costEurPerDay;
+        double profitEurPerDay;
+        double networkDifficulty;
+        double coinPriceEur;
+        QDateTime calculatedAt;
+        float confidence;
+        QString dataSource;
+    };
 
     explicit DaemonGrpcClient(QObject *parent = nullptr);
     ~DaemonGrpcClient() override;
@@ -111,6 +125,11 @@ public:
     void startTelemetryStream();
     void stopTelemetryStream();
     bool isTelemetryStreamActive() const;
+    
+    // Profitability operations (Phase 2.4)
+    void getProfitabilityData();
+    void startAutoMining(const QString &walletAddress = "");
+    void stopAutoMining();
 
 signals:
     // Connection signals
@@ -135,6 +154,10 @@ signals:
     void telemetryStreamStarted();
     void telemetryStreamStopped();
     void telemetryStreamError(const QString &error);
+    
+    // Profitability signals (Phase 2.4)
+    void profitabilityDataReceived(const QVector<ProfitabilityInfo> &profitabilityData, 
+                                  const QString &recommendedAlgorithm);
 
 private slots:
     void checkConnectionHealth();

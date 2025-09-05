@@ -30,6 +30,9 @@ pub struct Telemetry {
     pub fan_speed_percent: Option<f64>,
     pub pool_ping_ms: Option<u32>,
     pub algorithm: String,
+    pub pool_url: String,
+    pub error_message: String,
+    pub pool_status: i32,
 }
 
 impl Default for Telemetry {
@@ -47,6 +50,9 @@ impl Default for Telemetry {
             fan_speed_percent: None,
             pool_ping_ms: None,
             algorithm: "unknown".to_string(),
+            pool_url: "".to_string(),
+            error_message: "".to_string(),
+            pool_status: 0,
         }
     }
 }

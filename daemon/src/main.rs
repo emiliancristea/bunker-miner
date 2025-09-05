@@ -5,6 +5,7 @@ mod config;
 mod miners;
 mod grpc;
 mod profit_engine;
+mod web_dashboard;
 
 use clap::{Arg, Command};
 use std::process;
@@ -20,6 +21,7 @@ use config::ConfigManager;
 use miners::{MinerManager, ProcessSupervisor, Telemetry};
 use grpc::{DaemonState, GrpcServer};
 use profit_engine::{ProfitEngineService, AlgorithmProfile};
+use web_dashboard::WebDashboardServer;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -669,6 +671,9 @@ async fn serve_grpc_command() -> Result<(), Box<dyn std::error::Error>> {
     // Create gRPC server
     let grpc_server = GrpcServer::new(daemon_state.clone(), config.grpc.clone());
     
+    // Create web dashboard server
+    let web_dashboard_server = WebDashboardServer::new(config.clone(), daemon_state.telemetry_broadcaster.clone());
+    
     println!("\n🚀 Starting gRPC API server...");
     println!("  Address: {}:{}", config.grpc.bind_address, config.grpc.port);
     println!("  TLS: {}", if config.grpc.tls_enabled { "enabled" } else { "disabled" });
@@ -679,6 +684,11 @@ async fn serve_grpc_command() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         println!("  ⚠️  Server bound to all interfaces - ensure TLS is properly configured!");
     }
+    
+    println!("\n🌐 Starting web dashboard server...");
+    println!("  Address: http://127.0.0.1:{}", config.grpc.port + 100);
+    println!("  🔒 Dashboard bound to localhost only for security");
+    println!("  🔗 WebSocket telemetry streaming enabled");
     
     println!("\n💡 Available endpoints:");
     println!("  - GetSystemInfo: Get system and device information");
@@ -692,9 +702,9 @@ async fn serve_grpc_command() -> Result<(), Box<dyn std::error::Error>> {
     println!("  bunker-miner-cli info");
     println!("  bunker-miner-cli watch");
     
-    println!("\n💡 Press Ctrl+C to stop the server");
+    println!("\n💡 Press Ctrl+C to stop both servers");
     
-    // Start the gRPC server
+    // Start both servers concurrently
     tokio::select! {
         result = grpc_server.start() => {
             match result {
@@ -707,10 +717,21 @@ async fn serve_grpc_command() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+        result = web_dashboard_server.start() => {
+            match result {
+                Ok(()) => {
+                    info!("Web dashboard server shut down normally");
+                }
+                Err(e) => {
+                    error!("Web dashboard server error: {}", e);
+                    return Err(e.into());
+                }
+            }
+        }
         _ = tokio::signal::ctrl_c() => {
             println!("\n\n🛑 Received shutdown signal...");
-            info!("Shutting down gRPC server");
-            println!("✅ gRPC server stopped");
+            info!("Shutting down gRPC server and web dashboard");
+            println!("✅ Servers stopped");
         }
     }
     

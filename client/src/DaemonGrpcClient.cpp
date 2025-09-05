@@ -761,3 +761,127 @@ void DaemonGrpcClient::onTelemetryStreamError(const QString &error) {
     m_telemetryStreamActive.store(false);
     emit telemetryStreamError(error);
 }
+
+// ============================================================================
+// PHASE 2.4 - PROFITABILITY OPERATIONS
+// ============================================================================
+
+void DaemonGrpcClient::getProfitabilityData() {
+    if (!m_grpcStub || !isConnected()) {
+        qWarning() << "Cannot get profitability data: not connected to daemon";
+        return;
+    }
+    
+    qDebug() << "Requesting profitability data from daemon";
+    
+    // Create empty request
+    google::protobuf::Empty request;
+    grpc::ClientContext context;
+    bunker::daemon::v1::ProfitabilityResponse response;
+    
+    // Set reasonable deadline
+    context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(10));
+    
+    // Make async gRPC call
+    std::thread([this, request = std::move(request)]() mutable {
+        grpc::ClientContext context;
+        bunker::daemon::v1::ProfitabilityResponse response;
+        context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(10));
+        
+        grpc::Status status = m_grpcStub->GetProfitability(&context, request, &response);
+        
+        // Convert response to Qt structures and emit signal
+        QMetaObject::invokeMethod(this, [this, status, response]() {
+            if (status.ok()) {
+                QVector<ProfitabilityInfo> profitabilityData;
+                
+                for (const auto& info : response.profitability_info()) {
+                    ProfitabilityInfo profInfo;
+                    profInfo.algorithm = QString::fromStdString(info.algorithm());
+                    profInfo.coin = QString::fromStdString(info.coin());
+                    profInfo.revenueEurPerDay = info.revenue_eur_day();
+                    profInfo.costEurPerDay = info.cost_eur_day();
+                    profInfo.profitEurPerDay = info.profit_eur_day();
+                    profInfo.networkDifficulty = info.network_difficulty();
+                    profInfo.coinPriceEur = info.coin_price_eur();
+                    
+                    if (info.has_calculated_at()) {
+                        profInfo.calculatedAt = QDateTime::fromSecsSinceEpoch(
+                            info.calculated_at().seconds());
+                    } else {
+                        profInfo.calculatedAt = QDateTime::currentDateTime();
+                    }
+                    
+                    profInfo.confidence = info.confidence();
+                    profInfo.dataSource = QString::fromStdString(info.data_source());
+                    
+                    profitabilityData.append(profInfo);
+                }
+                
+                QString recommendedAlgorithm = QString::fromStdString(response.recommended_algorithm());
+                
+                qDebug() << "Successfully retrieved profitability data for" << profitabilityData.size() << "algorithms";
+                emit profitabilityDataReceived(profitabilityData, recommendedAlgorithm);
+                
+            } else {
+                qWarning() << "Failed to get profitability data:" << QString::fromStdString(status.error_message());
+                // Emit empty data to indicate error
+                emit profitabilityDataReceived(QVector<ProfitabilityInfo>(), QString());
+            }
+        }, Qt::QueuedConnection);
+    }).detach();
+}
+
+void DaemonGrpcClient::startAutoMining(const QString &walletAddress) {
+    if (!m_grpcStub || !isConnected()) {
+        qWarning() << "Cannot start auto mining: not connected to daemon";
+        emit miningError("Not connected to daemon");
+        return;
+    }
+    
+    qDebug() << "Starting auto mining mode";
+    
+    // Create mining configuration request with auto mode enabled
+    bunker::daemon::v1::StartMiningRequest request;
+    auto* config = request.mutable_config();
+    
+    config->set_algorithm("auto"); // Special algorithm indicating auto mode
+    config->set_pool_url("auto");  // Daemon will determine best pool
+    config->set_wallet_address(walletAddress.toStdString());
+    config->set_worker_name("bunker-miner-auto");
+    config->set_intensity(1.0f); // Maximum intensity
+    
+    request.set_stop_existing(true);
+    request.set_timeout_seconds(30);
+    
+    std::thread([this, request = std::move(request)]() mutable {
+        grpc::ClientContext context;
+        bunker::daemon::v1::CommandResponse response;
+        context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(35));
+        
+        grpc::Status status = m_grpcStub->StartMining(&context, request, &response);
+        
+        QMetaObject::invokeMethod(this, [this, status, response]() {
+            if (status.ok()) {
+                if (response.status() == bunker::daemon::v1::CommandResponse::STATUS_SUCCESS) {
+                    updateMiningState(true, "auto");
+                    qDebug() << "Auto mining started successfully";
+                    emit miningStarted("Auto Mode");
+                } else {
+                    QString errorMsg = QString::fromStdString(response.message());
+                    qWarning() << "Auto mining start failed:" << errorMsg;
+                    emit miningError(errorMsg);
+                }
+            } else {
+                QString errorMsg = QString::fromStdString(status.error_message());
+                qWarning() << "Auto mining gRPC call failed:" << errorMsg;
+                emit miningError("Failed to communicate with daemon: " + errorMsg);
+            }
+        }, Qt::QueuedConnection);
+    }).detach();
+}
+
+void DaemonGrpcClient::stopAutoMining() {
+    // Use the existing stopMiningOperation method
+    stopMiningOperation();
+}

@@ -11,6 +11,11 @@
 #include <QTreeWidget>
 #include <QTextEdit>
 #include <QStatusBar>
+#include <QTableWidget>
+#include <QHeaderView>
+#include <QScrollArea>
+#include <QGridLayout>
+#include <QTimer>
 #include <memory>
 #include <QMap>
 
@@ -73,6 +78,19 @@ private slots:
     
     // Device interaction slots
     void onDeviceClicked(const QString &deviceId);
+    
+    // Profitability slots (Phase 2.4)
+    void onAutoMiningClicked();
+    void onRefreshProfitabilityClicked();
+    void onProfitabilityDataReceived(const QVector<DaemonGrpcClient::ProfitabilityInfo> &profitabilityData, 
+                                     const QString &recommendedAlgorithm);
+    void onProfitabilityUpdateTimer();
+    
+    // BUNKER POOL slots (Phase 3.4)
+    void onRefreshPoolStatsClicked();
+    void onPoolStatsUpdateTimer();
+    void onSwitchToBunkerPoolClicked();
+    void onPoolStatsReceived();
 
 private:
     void setupUI();
@@ -99,6 +117,17 @@ private:
     void clearDeviceWidgets();
     void updateTelemetryDisplay();
     
+    // Profitability display methods (Phase 2.4)
+    void setupProfitabilityPage();
+    void updateProfitabilityTable(const QVector<DaemonGrpcClient::ProfitabilityInfo> &profitabilityData);
+    void updateAutoMiningControls();
+    void refreshProfitabilityData();
+    
+    // BUNKER POOL display methods (Phase 3.4)
+    void setupPoolStatsPage();
+    void updatePoolStatsDisplay();
+    void refreshPoolStats();
+    
     // UI Layout Components
     QWidget *m_centralWidget;
     QHBoxLayout *m_mainLayout;
@@ -116,6 +145,8 @@ private:
     // Page widgets
     QWidget *m_dashboardPage;
     QWidget *m_devicesPage;
+    QWidget *m_profitabilityPage;  // Phase 2.4 - New profitability page
+    QWidget *m_poolStatsPage;      // Phase 3.4 - BUNKER POOL statistics page
     QWidget *m_benchmarksPage;
     QWidget *m_settingsPage;
     
@@ -134,8 +165,26 @@ private:
     QHBoxLayout *m_miningControlsLayout;
     QPushButton *m_startMiningButton;
     QPushButton *m_stopMiningButton;
+    QPushButton *m_autoMiningButton;  // Phase 2.4 - Auto-mining toggle
     QLabel *m_miningStatusLabel;
     QLabel *m_algorithmStatusLabel;
+    QLabel *m_autoMiningStatusLabel;  // Phase 2.4 - Auto-mining status
+    
+    // Profitability display (Phase 2.4)
+    QVBoxLayout *m_profitabilityLayout;
+    QTableWidget *m_profitabilityTable;
+    QLabel *m_profitabilityStatusLabel;
+    QPushButton *m_refreshProfitabilityButton;
+    QTimer *m_profitabilityUpdateTimer;
+    
+    // BUNKER POOL display (Phase 3.4)
+    QVBoxLayout *m_poolStatsLayout;
+    QTableWidget *m_poolStatsTable;
+    QLabel *m_poolStatsStatusLabel;
+    QLabel *m_poolAdvantageLabel;
+    QPushButton *m_refreshPoolStatsButton;
+    QPushButton *m_switchToBunkerPoolButton;
+    QTimer *m_poolStatsUpdateTimer;
     
     // Telemetry display (Phase 2.2)
     QWidget *m_telemetryDisplayWidget;
@@ -155,13 +204,18 @@ private:
     // State tracking
     bool m_isConnectedToDaemon;
     bool m_isMining; // Phase 2.2
+    bool m_isAutoMining; // Phase 2.4 - Auto-mining state
     QString m_currentMiningAlgorithm; // Phase 2.2
+    QString m_recommendedAlgorithm; // Phase 2.4 - Most profitable algorithm
     std::vector<DaemonGrpcClient::DeviceInfo> m_lastDeviceInfo; // Phase 2.2
+    QTimer *m_profitabilityRefreshTimer; // Phase 2.4 - Timer for profitability updates
     
     enum NavigationPage {
         PAGE_DASHBOARD = 0,
         PAGE_DEVICES = 1,
-        PAGE_BENCHMARKS = 2,
-        PAGE_SETTINGS = 3
+        PAGE_PROFITABILITY = 2,  // Phase 2.4 - New profitability page
+        PAGE_POOL_STATS = 3,     // Phase 3.4 - BUNKER POOL statistics page
+        PAGE_BENCHMARKS = 4,
+        PAGE_SETTINGS = 5
     };
 };
