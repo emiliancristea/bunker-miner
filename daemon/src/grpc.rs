@@ -12,6 +12,7 @@ use sysinfo::System;
 use crate::config::{Config, GrpcConfig};
 use crate::hardware::{HardwareDetector, MiningDevice};
 use crate::miners::{MinerManager, ProcessSupervisor, Telemetry};
+use crate::profit_engine::ProfitEngineService;
 
 // Include the generated gRPC code
 include!("generated/bunker.daemon.v1.rs");
@@ -30,6 +31,7 @@ pub struct DaemonState {
     pub miner_manager: RwLock<MinerManager>,
     pub process_supervisors: RwLock<HashMap<String, ProcessSupervisor>>,
     pub telemetry_broadcaster: TelemetryBroadcaster,
+    pub profit_engine_service: Option<Arc<ProfitEngineService>>,
     pub daemon_version: String,
     pub api_version: String,
     pub build_timestamp: String,
@@ -49,12 +51,17 @@ impl DaemonState {
             miner_manager: RwLock::new(miner_manager),
             process_supervisors: RwLock::new(HashMap::new()),
             telemetry_broadcaster: TelemetryBroadcaster::new(),
+            profit_engine_service: None,
             daemon_version: env!("CARGO_PKG_VERSION").to_string(),
             api_version: "0.1.0".to_string(),
             build_timestamp: option_env!("VERGEN_BUILD_TIMESTAMP").unwrap_or("unknown").to_string(),
             git_commit: option_env!("VERGEN_GIT_SHA").unwrap_or("unknown").to_string(),
             start_time: SystemTime::now(),
         }
+    }
+    
+    pub fn set_profit_engine(&mut self, profit_service: Arc<ProfitEngineService>) {
+        self.profit_engine_service = Some(profit_service);
     }
 }
 
@@ -317,20 +324,76 @@ impl BunkerMinerDaemon for BunkerMinerDaemonImpl {
     ) -> Result<Response<ProfitabilityResponse>, Status> {
         debug!("Received GetProfitability request from {:?}", request.remote_addr());
         
-        // TODO: Implement profitability calculation
-        let response = ProfitabilityResponse {
-            profitability_info: vec![],
-            recommended_algorithm: "ethereum_ethash".to_string(),
-            timestamp: Some(Timestamp {
-                seconds: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs() as i64,
-                nanos: 0,
-            }),
-            data_age_seconds: 0,
+        // Check if profit engine is available
+        let profit_service = match &self.state.profit_engine_service {
+            Some(service) => service,
+            None => {
+                return Ok(Response::new(ProfitabilityResponse {
+                    profitability_info: vec![],
+                    recommended_algorithm: "".to_string(),
+                    timestamp: Some(Timestamp {
+                        seconds: SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs() as i64,
+                        nanos: 0,
+                    }),
+                    data_age_seconds: 0,
+                }));
+            }
         };
         
+        // Get profitability rankings from the engine
+        let profitability_data = profit_service.get_profitability_rankings().await;
+        
+        // Convert internal profitability data to gRPC format
+        let profitability_info: Vec<ProfitabilityInfo> = profitability_data
+            .iter()
+            .map(|data| ProfitabilityInfo {
+                algorithm: data.algorithm.clone(),
+                coin: data.coin_symbol.clone(),
+                revenue_eur_day: data.revenue_eur_per_day,
+                cost_eur_day: data.cost_eur_per_day,
+                profit_eur_day: data.net_profit_eur_per_day,
+                network_difficulty: 0.0, // TODO: Add network difficulty to profitability data
+                coin_price_eur: 0.0, // TODO: Add coin price to profitability data
+                calculated_at: Some(Timestamp {
+                    seconds: data.last_updated as i64,
+                    nanos: 0,
+                }),
+                confidence: 0.95, // High confidence for benchmarked data
+                data_source: "BUNKER MINER Engine".to_string(),
+            })
+            .collect();
+        
+        // Determine recommended algorithm (most profitable)
+        let recommended_algorithm = profitability_data
+            .first()
+            .map(|data| data.algorithm.clone())
+            .unwrap_or_default();
+        
+        // Calculate data age (time since last update)
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let data_age_seconds = if let Some(first) = profitability_data.first() {
+            (current_time - first.last_updated) as u32
+        } else {
+            0
+        };
+        
+        let response = ProfitabilityResponse {
+            profitability_info,
+            recommended_algorithm,
+            timestamp: Some(Timestamp {
+                seconds: current_time as i64,
+                nanos: 0,
+            }),
+            data_age_seconds,
+        };
+        
+        debug!("Returning profitability data for {} algorithms", response.profitability_info.len());
         Ok(Response::new(response))
     }
     

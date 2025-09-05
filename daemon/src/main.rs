@@ -4,6 +4,7 @@ mod profiles;
 mod config;
 mod miners;
 mod grpc;
+mod profit_engine;
 
 use clap::{Arg, Command};
 use std::process;
@@ -18,6 +19,7 @@ use profiles::ProfileManager;
 use config::ConfigManager;
 use miners::{MinerManager, ProcessSupervisor, Telemetry};
 use grpc::{DaemonState, GrpcServer};
+use profit_engine::{ProfitEngineService, AlgorithmProfile};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -70,6 +72,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .subcommand(
             Command::new("start")
                 .about("Start mining with current configuration")
+                .arg(
+                    Arg::new("auto")
+                        .long("auto")
+                        .help("Enable automatic profit switching")
+                        .action(clap::ArgAction::SetTrue)
+                )
         )
         .subcommand(
             Command::new("stop")
@@ -101,8 +109,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(("show-profiles", _)) => {
             show_profiles_command().await?;
         }
-        Some(("start", _)) => {
-            start_mining_command().await?;
+        Some(("start", sub_matches)) => {
+            start_mining_command(sub_matches).await?;
         }
         Some(("stop", _)) => {
             info!("Stopping mining operation...");
@@ -381,9 +389,16 @@ async fn show_profiles_command() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn start_mining_command() -> Result<(), Box<dyn std::error::Error>> {
-    println!("BUNKER MINER Daemon - Start Mining");
-    println!("==================================");
+async fn start_mining_command(matches: &clap::ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
+    let auto_mode = matches.get_flag("auto");
+    
+    if auto_mode {
+        println!("BUNKER MINER Daemon - Start Auto Mining (Profit Switching)");
+        println!("==========================================================");
+    } else {
+        println!("BUNKER MINER Daemon - Start Mining");
+        println!("==================================");
+    }
     
     info!("Initializing mining operation...");
     
@@ -392,6 +407,14 @@ async fn start_mining_command() -> Result<(), Box<dyn std::error::Error>> {
     let config = config_manager.load_config().await?;
     
     info!("✓ Configuration loaded successfully");
+    
+    // Check if profit switching is enabled when using auto mode
+    if auto_mode {
+        if !config.profit_switching.enable {
+            return Err("Profit switching is disabled in configuration. Enable it or remove --auto flag.".into());
+        }
+        info!("✓ Profit switching enabled");
+    }
     
     // Initialize hardware detector
     let mut hardware_detector = HardwareDetector::new()?;
@@ -439,6 +462,53 @@ async fn start_mining_command() -> Result<(), Box<dyn std::error::Error>> {
         info!("  Device {}: {} ({})", i, device.name, format!("{:?}", device.device_type));
     }
     
+    // Initialize profit engine if in auto mode
+    let profit_engine_service = if auto_mode {
+        info!("Initializing profit switching engine...");
+        
+        // Load device profiles for profit calculation
+        let mut profile_manager = ProfileManager::new()?;
+        let profiles = profile_manager.get_all_profiles()?;
+        
+        if profiles.is_empty() {
+            return Err("No device profiles found for profit switching. Run 'benchmark' command first.".into());
+        }
+        
+        // Create algorithm profiles from device profiles
+        let mut algorithm_profiles = Vec::new();
+        for profile in &profiles {
+            for (algo_name, algo_profile) in &profile.algorithms {
+                if config.profit_switching.enabled_algorithms.contains(algo_name) &&
+                   !config.profit_switching.disabled_algorithms.contains(algo_name) {
+                    algorithm_profiles.push(AlgorithmProfile {
+                        name: algo_name.clone(),
+                        hashrate_hs: algo_profile.average_metrics.avg_hashrate_hs,
+                        power_watts: algo_profile.average_metrics.avg_power_watts.unwrap_or(300.0),
+                        coin_symbol: match algo_name.as_str() {
+                            "RandomX" => "monero".to_string(),
+                            "Ethash" => "ethereum".to_string(),
+                            _ => algo_name.to_lowercase(),
+                        },
+                        enabled: true,
+                    });
+                }
+            }
+        }
+        
+        if algorithm_profiles.is_empty() {
+            return Err("No enabled algorithms found for profit switching.".into());
+        }
+        
+        let profit_service = ProfitEngineService::new(&config);
+        profit_service.start(algorithm_profiles).await?;
+        
+        info!("✓ Profit engine initialized with {} algorithms", profit_service.get_profitability_rankings().await.len());
+        
+        Some(profit_service)
+    } else {
+        None
+    };
+    
     // Create telemetry channel
     let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<Telemetry>();
     
@@ -463,6 +533,13 @@ async fn start_mining_command() -> Result<(), Box<dyn std::error::Error>> {
              &config.get_active_wallet()?.address[config.get_active_wallet()?.address.len()-8..]);
     println!("  Miner: {}", adapter.get_name());
     println!("  Devices: {}", compatible_devices.len());
+    
+    if auto_mode {
+        println!("  Mode: Automatic profit switching enabled");
+        println!("  Electricity cost: {:.3} EUR/kWh", config.profit_switching.electricity_eur_per_kwh);
+        println!("  Profit delta threshold: {:.1}%", config.profit_switching.profit_delta_threshold);
+        println!("  Min dwell time: {} minutes", config.profit_switching.min_dwell_time_minutes);
+    }
     
     println!("\n📊 Real-time telemetry:");
     println!("========================");
@@ -503,6 +580,18 @@ async fn start_mining_command() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     
+    // Start profit switching task if in auto mode
+    let profit_switching_handle = if let Some(profit_service) = profit_engine_service {
+        let profit_service_arc = Arc::new(profit_service);
+        let profit_service_clone = profit_service_arc.clone();
+        
+        Some(tokio::spawn(async move {
+            profit_service_clone.update_loop().await
+        }))
+    } else {
+        None
+    };
+    
     println!("\n💡 Press Ctrl+C to stop mining");
     println!("   Mining will continue running in the background...");
     
@@ -514,6 +603,12 @@ async fn start_mining_command() -> Result<(), Box<dyn std::error::Error>> {
             
             // Cancel telemetry display
             telemetry_handle.abort();
+            
+            // Cancel profit switching if running
+            if let Some(profit_handle) = profit_switching_handle {
+                profit_handle.abort();
+                info!("Profit switching engine stopped");
+            }
             
             // Wait for supervision to finish
             if let Err(e) = timeout(Duration::from_secs(15), supervision_handle).await {

@@ -16,6 +16,7 @@ pub struct Config {
     pub pools: HashMap<String, PoolConfig>,
     pub security: SecurityConfig,
     pub grpc: GrpcConfig,
+    pub profit_switching: ProfitSwitchingConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +68,20 @@ pub struct GrpcConfig {
     pub max_connections: u32,
     pub connection_timeout_seconds: u64,
     pub request_timeout_seconds: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfitSwitchingConfig {
+    pub enable: bool,
+    pub electricity_eur_per_kwh: f64,
+    pub profit_delta_threshold: f64,
+    pub min_dwell_time_minutes: u64,
+    pub update_interval_minutes: Option<u64>,
+    pub pool_fee_percent: Option<f64>,
+    pub enabled_algorithms: Vec<String>,
+    pub disabled_algorithms: Vec<String>,
+    #[cfg(feature = "proxy")]
+    pub proxy_url: Option<String>,
 }
 
 impl Default for Config {
@@ -134,6 +149,18 @@ impl Default for Config {
                 max_connections: 100,
                 connection_timeout_seconds: 30,
                 request_timeout_seconds: 60,
+            },
+            profit_switching: ProfitSwitchingConfig {
+                enable: false,
+                electricity_eur_per_kwh: 0.15,
+                profit_delta_threshold: 5.0,
+                min_dwell_time_minutes: 10,
+                update_interval_minutes: Some(5),
+                pool_fee_percent: Some(1.0),
+                enabled_algorithms: vec!["RandomX".to_string(), "Ethash".to_string()],
+                disabled_algorithms: vec![],
+                #[cfg(feature = "proxy")]
+                proxy_url: None,
             },
         }
     }
