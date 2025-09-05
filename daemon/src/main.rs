@@ -6,6 +6,8 @@ mod miners;
 mod grpc;
 mod profit_engine;
 mod web_dashboard;
+mod overclocking;
+mod power_tuning;
 
 use clap::{Arg, Command};
 use std::process;

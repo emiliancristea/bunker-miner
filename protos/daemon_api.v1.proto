@@ -276,6 +276,146 @@ message MiningConfig {
   map<string, string> extra_params = 9;
 }
 
+// PHASE 4.1 - OVERCLOCKING AND POWER TUNING MESSAGES
+// =============================================================================
+
+// Overclocking profile for hardware optimization
+message OverclockProfile {
+  // Algorithm this profile applies to
+  // Validated: Must be non-empty, max 32 characters
+  string algorithm = 1;
+  
+  // Core clock offset in MHz (can be negative for underclocking)
+  // Validated: >= -500, <= 500
+  int32 core_clock_offset = 2;
+  
+  // Memory clock offset in MHz (can be negative)
+  // Validated: >= -1000, <= 1000
+  int32 memory_clock_offset = 3;
+  
+  // Power limit in watts (0 means use default)
+  // Validated: >= 50, <= 500, 0 = default
+  uint32 power_limit_watts = 4;
+  
+  // Temperature limit in Celsius (0 means use default)
+  // Validated: >= 60, <= 95, 0 = default
+  uint32 temperature_limit_c = 5;
+  
+  // Fan speed percentage (0 means auto)
+  // Validated: >= 0, <= 100, 0 = auto
+  uint32 fan_speed_percent = 6;
+  
+  // Whether this profile is enabled
+  bool enabled = 7;
+  
+  // User-defined name for this profile
+  // Validated: Must be non-empty, max 64 characters
+  string name = 8;
+}
+
+// Hardware defaults captured before any overclocking
+message HardwareDefaults {
+  // Device identifier
+  string device_id = 1;
+  
+  // Default core clock in MHz
+  uint32 core_clock_mhz = 2;
+  
+  // Default memory clock in MHz
+  uint32 memory_clock_mhz = 3;
+  
+  // Default power limit in watts
+  uint32 power_limit_watts = 4;
+  
+  // Default temperature limit in Celsius
+  uint32 temperature_limit_c = 5;
+  
+  // Default fan speed percentage
+  uint32 fan_speed_percent = 6;
+}
+
+// Current overclocking state for a device
+message OverclockState {
+  // Device identifier
+  string device_id = 1;
+  
+  // Currently applied profile (if any)
+  OverclockProfile applied_profile = 2;
+  
+  // Hardware defaults for this device
+  HardwareDefaults defaults = 3;
+  
+  // Whether device is currently overclocked
+  bool is_overclocked = 4;
+  
+  // When profile was last applied
+  google.protobuf.Timestamp last_applied = 5;
+  
+  // Current safety status
+  enum SafetyStatus {
+    SAFETY_STATUS_UNKNOWN = 0;
+    SAFETY_STATUS_SAFE = 1;
+    SAFETY_STATUS_WARNING = 2;
+    SAFETY_STATUS_CRITICAL = 3;
+  }
+  SafetyStatus safety_status = 6;
+}
+
+// Request to list available overclocking profiles
+message ListOverclockProfilesRequest {
+  // Optional algorithm filter
+  string algorithm_filter = 1;
+}
+
+// Response with overclocking profiles
+message ListOverclockProfilesResponse {
+  // Available overclocking profiles
+  repeated OverclockProfile profiles = 1;
+  
+  // Whether expert mode is enabled
+  bool expert_mode_enabled = 2;
+  
+  // Safety settings
+  message SafetySettings {
+    int32 max_core_clock_offset_mhz = 1;
+    int32 max_memory_clock_offset_mhz = 2;
+    uint32 max_power_limit_watts = 3;
+    uint32 max_temperature_limit_c = 4;
+    uint32 emergency_temperature_c = 5;
+  }
+  SafetySettings safety_settings = 3;
+  
+  // Response timestamp
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+// Request to apply overclocking profile
+message ApplyOverclockProfileRequest {
+  // Device ID to apply profile to
+  string device_id = 1;
+  
+  // Algorithm to apply profile for
+  string algorithm = 2;
+  
+  // Optional custom profile (overrides stored profile)
+  OverclockProfile custom_profile = 3;
+}
+
+// Request to revert device to defaults
+message RevertOverclockRequest {
+  // Device IDs to revert (empty = all devices)
+  repeated string device_ids = 1;
+  
+  // Whether to force revert (emergency)
+  bool force_revert = 2;
+}
+
+// Request to get hardware defaults
+message GetHardwareDefaultsRequest {
+  // Device ID to get defaults for
+  string device_id = 1;
+}
+
 // =============================================================================
 // REQUEST/RESPONSE MESSAGES
 // =============================================================================
@@ -535,6 +675,39 @@ service BunkerMinerDaemon {
     // Security: High-risk operation, requires strong authentication
     // Rate Limit: 1 request/second per client
     // Validation: Comprehensive input validation and configuration schema checking
+  }
+  
+  // PHASE 4.1 - OVERCLOCKING AND POWER TUNING OPERATIONS
+  
+  // List available overclocking profiles
+  rpc ListOverclockProfiles(ListOverclockProfilesRequest) returns (ListOverclockProfilesResponse) {
+    // Security: Read-only operation, requires expert mode enabled
+    // Rate Limit: 10 requests/second per client
+  }
+  
+  // Apply overclocking profile to device
+  rpc ApplyOverclockProfile(ApplyOverclockProfileRequest) returns (CommandResponse) {
+    // Security: HIGH-RISK operation, requires expert mode and elevated privileges
+    // Rate Limit: 2 requests/second per client
+    // Validation: Comprehensive safety validation of overclocking parameters
+  }
+  
+  // Revert device(s) to default hardware settings
+  rpc RevertOverclock(RevertOverclockRequest) returns (CommandResponse) {
+    // Security: Safety operation, always allowed when overclocking is active
+    // Rate Limit: 5 requests/second per client
+  }
+  
+  // Get hardware default settings for device
+  rpc GetHardwareDefaults(GetHardwareDefaultsRequest) returns (HardwareDefaults) {
+    // Security: Read-only operation, no sensitive data exposure
+    // Rate Limit: 10 requests/second per client
+  }
+  
+  // Get current overclocking states for all devices
+  rpc GetOverclockStates(google.protobuf.Empty) returns (stream OverclockState) {
+    // Security: Read-only operation, requires expert mode enabled
+    // Rate Limit: 5 requests/second per client
   }
 }
 

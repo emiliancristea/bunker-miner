@@ -9,6 +9,9 @@ use dirs::config_dir;
 use rpassword;
 use secrecy::{ExposeSecret, Secret};
 
+use crate::overclocking::OverclockProfile;
+use crate::power_tuning::PowerTuningProfile;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub mining: MiningConfig,
@@ -17,6 +20,55 @@ pub struct Config {
     pub security: SecurityConfig,
     pub grpc: GrpcConfig,
     pub profit_switching: ProfitSwitchingConfig,
+    pub overclocking: OverclockingConfig,
+    pub power_tuning: PowerTuningConfig,
+}
+
+/// Configuration for overclocking features (EXPERT MODE)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverclockingConfig {
+    /// Whether expert mode is enabled (REQUIRED for any overclocking)
+    pub expert_mode_enabled: bool,
+    /// Overclocking profiles by algorithm name
+    pub profiles: HashMap<String, OverclockProfile>,
+    /// Global safety settings
+    pub safety_settings: OverclockingSafetyConfig,
+    /// Whether user has accepted the liability disclaimer
+    pub disclaimer_accepted: bool,
+    /// Timestamp when disclaimer was accepted
+    pub disclaimer_accepted_timestamp: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Safety configuration for overclocking engine
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverclockingSafetyConfig {
+    /// Maximum allowed core clock offset in MHz
+    pub max_core_clock_offset_mhz: i32,
+    /// Maximum allowed memory clock offset in MHz
+    pub max_memory_clock_offset_mhz: i32,
+    /// Maximum allowed power limit in watts
+    pub max_power_limit_watts: u32,
+    /// Maximum allowed temperature limit in Celsius
+    pub max_temperature_limit_c: u32,
+    /// Emergency temperature threshold for immediate shutdown
+    pub emergency_temperature_c: u32,
+    /// Enable automatic revert on instability detection
+    pub auto_revert_on_instability: bool,
+    /// Revert timeout in seconds
+    pub revert_timeout_seconds: u32,
+}
+
+/// Configuration for power tuning features
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PowerTuningConfig {
+    /// Whether power tuning is enabled
+    pub enabled: bool,
+    /// Power tuning profiles by algorithm name
+    pub profiles: HashMap<String, PowerTuningProfile>,
+    /// Global efficiency targets
+    pub efficiency_targets: HashMap<String, f64>,
+    /// Power monitoring interval in seconds
+    pub monitoring_interval_seconds: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -194,6 +246,27 @@ impl Default for Config {
                 disabled_algorithms: vec![],
                 #[cfg(feature = "proxy")]
                 proxy_url: None,
+            },
+            overclocking: OverclockingConfig {
+                expert_mode_enabled: false, // SECURITY: Always start disabled
+                profiles: HashMap::new(),
+                safety_settings: OverclockingSafetyConfig {
+                    max_core_clock_offset_mhz: 300,
+                    max_memory_clock_offset_mhz: 800,
+                    max_power_limit_watts: 400,
+                    max_temperature_limit_c: 85,
+                    emergency_temperature_c: 95,
+                    auto_revert_on_instability: true,
+                    revert_timeout_seconds: 10,
+                },
+                disclaimer_accepted: false, // SECURITY: Must explicitly accept
+                disclaimer_accepted_timestamp: None,
+            },
+            power_tuning: PowerTuningConfig {
+                enabled: false, // Disabled by default
+                profiles: HashMap::new(),
+                efficiency_targets: HashMap::new(),
+                monitoring_interval_seconds: 30,
             },
         }
     }
