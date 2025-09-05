@@ -1,0 +1,76 @@
+# BUNKER POOL - Kustomization
+# Manages Kubernetes resource deployment and configuration
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: bunker-pool
+
+# Namespace for all resources
+namespace: bunker-pool
+
+# Resource files to include
+resources:
+  - namespace.yaml
+  - rbac.yaml
+  - configmap.yaml
+  - secret.yaml
+  - service.yaml
+  - deployment.yaml
+  - hpa.yaml
+
+# Labels applied to all resources
+commonLabels:
+  app.kubernetes.io/name: bunker-pool
+  app.kubernetes.io/part-of: bunker-mining-suite
+  app.kubernetes.io/managed-by: kustomize
+
+# Annotations applied to all resources
+commonAnnotations:
+  deployment.kubernetes.io/revision: "1"
+  bunker-pool.com/version: "0.1.0"
+
+# Image tag replacement
+images:
+  - name: bunker-pool
+    newTag: latest
+
+# ConfigMap and Secret generators (for dynamic config)
+configMapGenerator:
+  - name: bunker-pool-env-config
+    literals:
+      - RUST_LOG=info
+      - BUNKER_POOL_ENV=production
+
+# Resource patches for environment-specific customization
+patchesStrategicMerge:
+  - |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: bunker-pool-stratum
+      namespace: bunker-pool
+    spec:
+      template:
+        spec:
+          containers:
+            - name: bunker-pool
+              resources:
+                requests:
+                  cpu: "1000m"
+                  memory: "1Gi"
+                limits:
+                  cpu: "4000m"
+                  memory: "4Gi"
+
+# Replica count override
+replicas:
+  - name: bunker-pool-stratum
+    count: 3
+
+# Generate name suffix for resources
+nameSuffix: "-v1"
+
+# Generate name prefix for resources
+# namePrefix: "prod-"

@@ -1,0 +1,56 @@
+# BUNKER POOL - Example Configuration
+# Production-ready configuration template for BUNKER POOL mining server
+
+[pool]
+name = "BUNKER POOL"
+algorithm = "sha256"  # Supported: sha256, scrypt, x11, blake2b, keccak, kawpow, khs
+fee_percentage = 1.0
+minimum_payout = 0.01
+payout_address = "bc1qbunkerpooltestaddress"
+donation_percentage = 0.5
+
+[stratum]
+bind_address = "0.0.0.0:3333"
+max_connections = 10000
+default_difficulty = 1.0
+connection_timeout_seconds = 300
+max_message_size = 8192
+
+[stratum.difficulty_adjustment]
+target_time_seconds = 15
+adjustment_window = 10
+min_difficulty = 0.01
+max_difficulty = 1000000.0
+max_adjustment_factor = 4.0
+
+[share_processor]
+worker_threads = 8  # Adjust based on CPU cores
+validation_timeout_ms = 1000
+max_pending_shares = 50000
+duplicate_check_window_minutes = 10
+
+[storage]
+redis_url = "redis://redis:6379"  # Use service name in Kubernetes
+key_prefix = "bunker_pool"
+round_expiry_days = 7
+stats_expiry_days = 30
+max_retry_attempts = 3
+
+[coin_daemon]
+rpc_url = "http://bitcoin-node:8332"  # Update with your Bitcoin node
+rpc_username = "bunker_user"
+rpc_password = "secure_password_123"  # Use strong password
+poll_interval_seconds = 10
+timeout_seconds = 30
+coinbase_address = "bc1qbunkerpooltestaddress"  # Your pool's Bitcoin address
+extra_data = "BUNKER POOL"
+
+[metrics]
+enabled = true
+bind_address = "0.0.0.0:9090"
+collection_interval_seconds = 60
+
+[logging]
+level = "info"  # Options: trace, debug, info, warn, error
+json_format = false
+# file_path = "/opt/bunker/logs/bunker-pool.log"  # Uncomment for file logging

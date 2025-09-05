@@ -1,0 +1,106 @@
+# BUNKER POOL - RBAC Configuration
+# ServiceAccount and minimal RBAC permissions
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bunker-pool
+  namespace: bunker-pool
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: bunker-mining-suite
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/bunker-pool-mining-app  # Replace with actual IAM role ARN
+
+---
+# ClusterRole for minimal required permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: bunker-pool-reader
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: bunker-mining-suite
+rules:
+  # Read access to own namespace resources (for health checks, etc.)
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps"]
+    verbs: ["get", "list", "watch"]
+  # Read access to node information (for metrics)
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+  # Read access to metrics
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list"]
+
+---
+# ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: bunker-pool-reader
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: bunker-mining-suite
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: bunker-pool-reader
+subjects:
+  - kind: ServiceAccount
+    name: bunker-pool
+    namespace: bunker-pool
+
+---
+# Role for namespace-specific permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: bunker-pool
+  name: bunker-pool-namespace
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: bunker-mining-suite
+rules:
+  # Full access to ConfigMaps and Secrets in own namespace
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+  # Access to create/update own service endpoints
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Access to update own pod status
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  # Access to create events for logging
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create"]
+
+---
+# RoleBinding for namespace permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: bunker-pool-namespace
+  namespace: bunker-pool
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: bunker-mining-suite
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: bunker-pool-namespace
+subjects:
+  - kind: ServiceAccount
+    name: bunker-pool
+    namespace: bunker-pool

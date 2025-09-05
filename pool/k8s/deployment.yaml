@@ -1,0 +1,202 @@
+# BUNKER POOL - Kubernetes Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bunker-pool-stratum
+  namespace: bunker-pool
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: stratum
+    app.kubernetes.io/part-of: bunker-mining-suite
+    app.kubernetes.io/version: "0.1.0"
+spec:
+  replicas: 3  # High availability with 3 replicas
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bunker-pool
+      app.kubernetes.io/component: stratum
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bunker-pool
+        app.kubernetes.io/component: stratum
+        app.kubernetes.io/part-of: bunker-mining-suite
+        app.kubernetes.io/version: "0.1.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: bunker-pool
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: bunker-pool
+          image: bunker-pool:latest  # Replace with actual image
+          imagePullPolicy: Always
+          ports:
+            - name: stratum
+              containerPort: 3333
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          env:
+            - name: RUST_LOG
+              value: "info"
+            - name: BUNKER_POOL_CONFIG
+              value: "/opt/bunker/config/bunker-pool.toml"
+            - name: COIN_DAEMON_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bunker-pool-secrets
+                  key: coin_daemon_password
+          volumeMounts:
+            - name: config
+              mountPath: /opt/bunker/config
+              readOnly: true
+            - name: data
+              mountPath: /opt/bunker/data
+            - name: logs
+              mountPath: /opt/bunker/logs
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+              scheme: HTTP
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1000
+      volumes:
+        - name: config
+          configMap:
+            name: bunker-pool-config
+        - name: data
+          emptyDir: {}
+        - name: logs
+          emptyDir: {}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app.kubernetes.io/name
+                      operator: In
+                      values:
+                        - bunker-pool
+                topologyKey: kubernetes.io/hostname
+      tolerations:
+        - key: "high-cpu"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+      nodeSelector:
+        node-type: "compute-optimized"  # Optional: target specific node types
+
+---
+# Redis Deployment (if not using external Redis)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bunker-pool-redis
+  namespace: bunker-pool
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: bunker-mining-suite
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/component: database
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis
+        app.kubernetes.io/component: database
+        app.kubernetes.io/part-of: bunker-mining-suite
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bunker-pool-secrets
+                  key: redis_password
+                  optional: true
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          livenessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: redis-data
+          emptyDir: {}  # Use PersistentVolumeClaim for production

@@ -1,0 +1,13 @@
+# BUNKER POOL - Kubernetes Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bunker-pool
+  labels:
+    name: bunker-pool
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/part-of: bunker-mining-suite
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: "BUNKER POOL mining pool namespace"
+    security.bunker-pool.com/network-policy: "default-deny"

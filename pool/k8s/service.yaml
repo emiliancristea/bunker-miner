@@ -1,0 +1,99 @@
+# BUNKER POOL - Kubernetes Services
+apiVersion: v1
+kind: Service
+metadata:
+  name: bunker-pool-stratum
+  namespace: bunker-pool
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: stratum
+    app.kubernetes.io/part-of: bunker-mining-suite
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-connection-draining-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-connection-draining-timeout: "60"
+spec:
+  type: LoadBalancer
+  loadBalancerSourceRanges:
+    # Allow access from anywhere for mining connections
+    - 0.0.0.0/0
+  ports:
+    - name: stratum
+      port: 3333
+      targetPort: stratum
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: stratum
+
+---
+# Service for Prometheus metrics (internal only)
+apiVersion: v1
+kind: Service
+metadata:
+  name: bunker-pool-metrics
+  namespace: bunker-pool
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: metrics
+    app.kubernetes.io/part-of: bunker-mining-suite
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: stratum
+
+---
+# Headless service for StatefulSet (if using StatefulSet for persistent storage)
+apiVersion: v1
+kind: Service
+metadata:
+  name: bunker-pool-headless
+  namespace: bunker-pool
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: headless
+    app.kubernetes.io/part-of: bunker-mining-suite
+spec:
+  clusterIP: None
+  ports:
+    - name: stratum
+      port: 3333
+      targetPort: stratum
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: stratum
+
+---
+# Redis service (if deploying Redis in the same namespace)
+apiVersion: v1
+kind: Service
+metadata:
+  name: bunker-pool-redis
+  namespace: bunker-pool
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: bunker-mining-suite
+spec:
+  type: ClusterIP
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: database
