@@ -34,14 +34,44 @@ find_package(gRPC REQUIRED)
 # Include directories
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}) # For generated files
+include_directories(${PROTO_GENERATED_DIR}) # For generated proto files
 
 # Protocol Buffers and gRPC stub generation
-set(PROTO_PATH ${CMAKE_SOURCE_DIR}/../protos)
-file(GLOB PROTO_FILES ${PROTO_PATH}/*.proto)
+set(PROTO_PATH ${CMAKE_CURRENT_SOURCE_DIR}/../protos)
+set(PROTO_FILES ${PROTO_PATH}/daemon_api.v1.proto)
 
-# Generated source files will be added here once protos are defined
+# Generated source files directory
 set(PROTO_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
 file(MAKE_DIRECTORY ${PROTO_GENERATED_DIR})
+
+# Generate C++ stubs from proto files
+protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS 
+    ${PROTO_FILES}
+)
+
+# Generate gRPC stubs
+find_program(GRPC_CPP_PLUGIN grpc_cpp_plugin)
+if(NOT GRPC_CPP_PLUGIN)
+    message(FATAL_ERROR "grpc_cpp_plugin not found!")
+endif()
+
+set(GRPC_SRCS ${PROTO_GENERATED_DIR}/daemon_api.v1.grpc.pb.cc)
+set(GRPC_HDRS ${PROTO_GENERATED_DIR}/daemon_api.v1.grpc.pb.h)
+
+add_custom_command(
+    OUTPUT ${GRPC_SRCS} ${GRPC_HDRS}
+    COMMAND ${Protobuf_PROTOC_EXECUTABLE}
+    ARGS --grpc_out=${PROTO_GENERATED_DIR}
+         --cpp_out=${PROTO_GENERATED_DIR}
+         --plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN}
+         -I${PROTO_PATH}
+         ${PROTO_FILES}
+    DEPENDS ${PROTO_FILES}
+    COMMENT "Generating gRPC C++ stubs"
+)
+
+# Ensure generated files are created before compilation
+add_custom_target(generate_grpc_stubs DEPENDS ${GRPC_SRCS} ${GRPC_HDRS} ${PROTO_SRCS} ${PROTO_HDRS})
 
 # Source files
 set(SOURCES
@@ -75,8 +105,14 @@ add_executable(${PROJECT_NAME}
     ${HEADERS}
     ${MOC_SOURCES}
     ${UI_HEADERS}
-    # Protocol buffer generated files will be added here
+    ${PROTO_SRCS}
+    ${PROTO_HDRS}
+    ${GRPC_SRCS}
+    ${GRPC_HDRS}
 )
+
+# Ensure generated files are created before main target
+add_dependencies(${PROJECT_NAME} generate_grpc_stubs)
 
 # Link libraries
 target_link_libraries(${PROJECT_NAME}
