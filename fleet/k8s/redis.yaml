@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bunker-redis
+  namespace: bunker-fleet
+spec:
+  selector:
+    matchLabels:
+      app: bunker-redis
+  template:
+    metadata:
+      labels:
+        app: bunker-redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        command: ["redis-server"]
+        args: ["--appendonly", "yes"]
+        ports:
+        - containerPort: 6379
+        volumeMounts:
+        - name: redis-storage
+          mountPath: /data
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+      volumes:
+      - name: redis-storage
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bunker-redis
+  namespace: bunker-fleet
+spec:
+  ports:
+  - port: 6379
+  selector:
+    app: bunker-redis

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fleet-controller-config
+  namespace: bunker-fleet
+data:
+  SERVER_HOST: "0.0.0.0"
+  SERVER_PORT: "8080"
+  ENVIRONMENT: "production"
+  JWT_EXPIRATION: "86400"
+  DATABASE_URL: "postgresql://bunker:bunker@bunker-postgres:5432/bunker_fleet"
+  REDIS_URL: "redis://bunker-redis:6379"

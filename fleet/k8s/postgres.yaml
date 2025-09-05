@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: bunker-fleet
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bunker-postgres
+  namespace: bunker-fleet
+spec:
+  selector:
+    matchLabels:
+      app: bunker-postgres
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: bunker-postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15
+        env:
+        - name: POSTGRES_DB
+          value: bunker_fleet
+        - name: POSTGRES_USER
+          value: bunker
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: fleet-controller-secrets
+              key: DATABASE_PASSWORD
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bunker-postgres
+  namespace: bunker-fleet
+spec:
+  ports:
+  - port: 5432
+  selector:
+    app: bunker-postgres

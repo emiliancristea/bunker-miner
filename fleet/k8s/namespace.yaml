@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bunker-fleet
+  labels:
+    name: bunker-fleet
+    component: fleet-management

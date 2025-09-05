@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BUNKER MINER Fleet Dashboard</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #0f1419 0%, #1a2332 100%);
+            color: #ffffff;
+            min-height: 100vh;
+        }
+
+        .header {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #00ff88;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .btn {
+            background: #00ff88;
+            color: #0f1419;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .btn:hover {
+            background: #00cc6a;
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: #ffffff;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .container {
+            padding: 2rem;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .auth-form {
+            max-width: 400px;
+            margin: 4rem auto;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 2rem;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            color: #ffffff;
+            font-size: 1rem;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #00ff88;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 1.5rem;
+        }
+
+        .stat-title {
+            font-size: 0.9rem;
+            opacity: 0.7;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #00ff88;
+        }
+
+        .rigs-grid {
+            display: grid;
+            gap: 1.5rem;
+        }
+
+        .rig-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 1.5rem;
+            transition: all 0.2s;
+        }
+
+        .rig-card:hover {
+            transform: translateY(-2px);
+            border-color: #00ff88;
+        }
+
+        .rig-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .rig-name {
+            font-size: 1.2rem;
+            font-weight: bold;
+        }
+
+        .status-badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .status-online {
+            background: #00ff88;
+            color: #0f1419;
+        }
+
+        .status-offline {
+            background: rgba(255, 255, 255, 0.2);
+            color: #ffffff;
+        }
+
+        .status-mining {
+            background: #ffaa00;
+            color: #0f1419;
+        }
+
+        .rig-metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 1rem;
+        }
+
+        .metric {
+            text-align: center;
+        }
+
+        .metric-value {
+            font-size: 1.1rem;
+            font-weight: bold;
+            color: #00ff88;
+        }
+
+        .metric-label {
+            font-size: 0.8rem;
+            opacity: 0.7;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 2rem;
+        }
+
+        .error {
+            background: rgba(255, 0, 0, 0.1);
+            border: 1px solid rgba(255, 0, 0, 0.3);
+            color: #ff6b6b;
+            padding: 1rem;
+            border-radius: 6px;
+            margin-bottom: 1rem;
+        }
+
+        .success {
+            background: rgba(0, 255, 136, 0.1);
+            border: 1px solid rgba(0, 255, 136, 0.3);
+            color: #00ff88;
+            padding: 1rem;
+            border-radius: 6px;
+            margin-bottom: 1rem;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+
+            .header {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .rig-metrics {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <div class="header">
+            <div class="logo">⛏️ BUNKER MINER Fleet</div>
+            <div class="user-info" v-if="user">
+                <span>{{ user.email }}</span>
+                <button class="btn btn-secondary" @click="logout">Logout</button>
+            </div>
+        </div>
+
+        <!-- Authentication Form -->
+        <div v-if="!user" class="auth-form">
+            <h2 style="margin-bottom: 2rem; text-align: center;">{{ isLogin ? 'Login' : 'Register' }}</h2>
+            
+            <div v-if="error" class="error">{{ error }}</div>
+            <div v-if="success" class="success">{{ success }}</div>
+
+            <form @submit.prevent="authenticate">
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" v-model="authForm.email" required>
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" v-model="authForm.password" required>
+                </div>
+                <div class="form-group">
+                    <button type="submit" class="btn" style="width: 100%;" :disabled="loading">
+                        {{ loading ? 'Please wait...' : (isLogin ? 'Login' : 'Register') }}
+                    </button>
+                </div>
+            </form>
+            
+            <p style="text-align: center; margin-top: 1rem;">
+                <a href="#" @click="isLogin = !isLogin" style="color: #00ff88;">
+                    {{ isLogin ? 'Need an account? Register' : 'Already have an account? Login' }}
+                </a>
+            </p>
+        </div>
+
+        <!-- Dashboard -->
+        <div v-if="user" class="container">
+            <div v-if="error" class="error">{{ error }}</div>
+            <div v-if="success" class="success">{{ success }}</div>
+
+            <!-- Stats Grid -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-title">Total Rigs</div>
+                    <div class="stat-value">{{ rigs.length }}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title">Online Rigs</div>
+                    <div class="stat-value">{{ onlineRigs.length }}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title">Total Hashrate</div>
+                    <div class="stat-value">{{ formatHashrate(totalHashrate) }}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title">Total Power</div>
+                    <div class="stat-value">{{ totalPower.toFixed(0) }}W</div>
+                </div>
+            </div>
+
+            <!-- Loading State -->
+            <div v-if="loading" class="loading">
+                <div>Loading rigs...</div>
+            </div>
+
+            <!-- Rigs Grid -->
+            <div v-else class="rigs-grid">
+                <div v-if="rigs.length === 0" style="text-align: center; padding: 2rem; opacity: 0.7;">
+                    No rigs registered yet. Connect your first rig to get started!
+                </div>
+                
+                <div v-for="rig in rigs" :key="rig.rig_id" class="rig-card">
+                    <div class="rig-header">
+                        <div class="rig-name">{{ rig.rig_name }}</div>
+                        <div class="status-badge" :class="getStatusClass(rig)">
+                            {{ rig.is_connected ? 'Connected' : rig.status }}
+                        </div>
+                    </div>
+                    
+                    <div v-if="rig.current_telemetry" class="rig-metrics">
+                        <div class="metric">
+                            <div class="metric-value">{{ formatHashrate(rig.current_telemetry.total_hashrate) }}</div>
+                            <div class="metric-label">Hashrate</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">{{ rig.current_telemetry.total_power.toFixed(0) }}W</div>
+                            <div class="metric-label">Power</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">{{ rig.current_telemetry.avg_temperature.toFixed(0) }}°C</div>
+                            <div class="metric-label">Temperature</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">{{ rig.current_telemetry.device_count }}</div>
+                            <div class="metric-label">Devices</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">{{ rig.current_telemetry.algorithm }}</div>
+                            <div class="metric-label">Algorithm</div>
+                        </div>
+                        <div class="metric" v-if="rig.current_telemetry.profit_eur_day">
+                            <div class="metric-value">€{{ rig.current_telemetry.profit_eur_day.toFixed(2) }}</div>
+                            <div class="metric-label">Daily Profit</div>
+                        </div>
+                    </div>
+                    
+                    <div v-else style="text-align: center; opacity: 0.7; padding: 1rem;">
+                        No telemetry data available
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+
+        createApp({
+            data() {
+                return {
+                    user: null,
+                    rigs: [],
+                    loading: false,
+                    error: null,
+                    success: null,
+                    isLogin: true,
+                    authForm: {
+                        email: '',
+                        password: ''
+                    },
+                    ws: null,
+                    wsConnected: false
+                }
+            },
+            computed: {
+                onlineRigs() {
+                    return this.rigs.filter(rig => rig.is_connected);
+                },
+                totalHashrate() {
+                    return this.rigs.reduce((sum, rig) => {
+                        return sum + (rig.current_telemetry ? rig.current_telemetry.total_hashrate : 0);
+                    }, 0);
+                },
+                totalPower() {
+                    return this.rigs.reduce((sum, rig) => {
+                        return sum + (rig.current_telemetry ? rig.current_telemetry.total_power : 0);
+                    }, 0);
+                }
+            },
+            mounted() {
+                // Check for stored token
+                const token = localStorage.getItem('bunker_token');
+                if (token) {
+                    this.setAuthHeader(token);
+                    this.loadUserProfile();
+                }
+            },
+            methods: {
+                async authenticate() {
+                    this.loading = true;
+                    this.error = null;
+                    this.success = null;
+
+                    try {
+                        const endpoint = this.isLogin ? '/api/auth/login' : '/api/auth/register';
+                        const response = await axios.post(endpoint, this.authForm);
+                        
+                        const { access_token, user } = response.data;
+                        
+                        // Store token and user info
+                        localStorage.setItem('bunker_token', access_token);
+                        this.user = user;
+                        this.setAuthHeader(access_token);
+                        
+                        this.success = this.isLogin ? 'Login successful!' : 'Registration successful!';
+                        
+                        // Load dashboard data
+                        await this.loadRigs();
+                        this.connectWebSocket();
+                        
+                    } catch (error) {
+                        this.error = error.response?.data?.error?.message || 'Authentication failed';
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                
+                async loadUserProfile() {
+                    try {
+                        const response = await axios.get('/api/user/profile');
+                        this.user = response.data;
+                        await this.loadRigs();
+                        this.connectWebSocket();
+                    } catch (error) {
+                        this.logout();
+                    }
+                },
+                
+                async loadRigs() {
+                    this.loading = true;
+                    try {
+                        const response = await axios.get('/api/fleet/rigs');
+                        this.rigs = response.data;
+                    } catch (error) {
+                        this.error = 'Failed to load rigs';
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                
+                connectWebSocket() {
+                    if (this.ws) {
+                        this.ws.close();
+                    }
+                    
+                    const token = localStorage.getItem('bunker_token');
+                    const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/fleet/dashboard/ws?token=${token}`;
+                    
+                    this.ws = new WebSocket(wsUrl);
+                    
+                    this.ws.onopen = () => {
+                        this.wsConnected = true;
+                        console.log('WebSocket connected');
+                        
+                        // Subscribe to all user's rigs
+                        const rigIds = this.rigs.map(rig => rig.rig_id);
+                        this.ws.send(JSON.stringify({
+                            type: 'Subscribe',
+                            rig_ids: rigIds
+                        }));
+                    };
+                    
+                    this.ws.onmessage = (event) => {
+                        try {
+                            const message = JSON.parse(event.data);
+                            this.handleWebSocketMessage(message);
+                        } catch (error) {
+                            console.error('Failed to parse WebSocket message:', error);
+                        }
+                    };
+                    
+                    this.ws.onclose = () => {
+                        this.wsConnected = false;
+                        console.log('WebSocket disconnected');
+                        // Attempt to reconnect after 5 seconds
+                        setTimeout(() => {
+                            if (this.user) {
+                                this.connectWebSocket();
+                            }
+                        }, 5000);
+                    };
+                    
+                    this.ws.onerror = (error) => {
+                        console.error('WebSocket error:', error);
+                    };
+                },
+                
+                handleWebSocketMessage(message) {
+                    switch (message.type) {
+                        case 'TelemetryUpdate':
+                            this.updateRigTelemetry(message.rig_id, message.data);
+                            break;
+                        case 'StatusUpdate':
+                            this.updateRigStatus(message.rig_id, message.status);
+                            break;
+                        case 'ConnectionUpdate':
+                            this.updateRigConnection(message.rig_id, message.connected);
+                            break;
+                        default:
+                            console.log('Unknown WebSocket message:', message);
+                    }
+                },
+                
+                updateRigTelemetry(rigId, telemetryData) {
+                    const rig = this.rigs.find(r => r.rig_id === rigId);
+                    if (rig) {
+                        rig.current_telemetry = telemetryData;
+                        rig.is_connected = true;
+                        rig.last_seen = new Date().toISOString();
+                    }
+                },
+                
+                updateRigStatus(rigId, status) {
+                    const rig = this.rigs.find(r => r.rig_id === rigId);
+                    if (rig) {
+                        rig.status = status;
+                    }
+                },
+                
+                updateRigConnection(rigId, connected) {
+                    const rig = this.rigs.find(r => r.rig_id === rigId);
+                    if (rig) {
+                        rig.is_connected = connected;
+                        if (connected) {
+                            rig.last_seen = new Date().toISOString();
+                        }
+                    }
+                },
+                
+                setAuthHeader(token) {
+                    axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+                },
+                
+                logout() {
+                    localStorage.removeItem('bunker_token');
+                    delete axios.defaults.headers.common['Authorization'];
+                    this.user = null;
+                    this.rigs = [];
+                    if (this.ws) {
+                        this.ws.close();
+                        this.ws = null;
+                    }
+                    this.wsConnected = false;
+                },
+                
+                getStatusClass(rig) {
+                    if (rig.is_connected) {
+                        return 'status-online';
+                    }
+                    switch (rig.status) {
+                        case 'mining':
+                            return 'status-mining';
+                        case 'online':
+                            return 'status-online';
+                        default:
+                            return 'status-offline';
+                    }
+                },
+                
+                formatHashrate(hashrate) {
+                    if (hashrate >= 1000000000) {
+                        return (hashrate / 1000000000).toFixed(2) + ' GH/s';
+                    } else if (hashrate >= 1000000) {
+                        return (hashrate / 1000000).toFixed(2) + ' MH/s';
+                    } else if (hashrate >= 1000) {
+                        return (hashrate / 1000).toFixed(2) + ' KH/s';
+                    }
+                    return hashrate.toFixed(2) + ' H/s';
+                }
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
