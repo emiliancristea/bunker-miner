@@ -8,6 +8,8 @@ mod profit_engine;
 mod web_dashboard;
 mod overclocking;
 mod power_tuning;
+mod fleet_agent;
+mod telemetry;
 
 use clap::{Arg, Command};
 use std::process;
@@ -24,6 +26,8 @@ use miners::{MinerManager, ProcessSupervisor, Telemetry};
 use grpc::{DaemonState, GrpcServer};
 use profit_engine::{ProfitEngineService, AlgorithmProfile};
 use web_dashboard::WebDashboardServer;
+use fleet_agent::FleetAgent;
+use telemetry::TelemetryCollector;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -675,6 +679,86 @@ async fn serve_grpc_command() -> Result<(), Box<dyn std::error::Error>> {
     
     // Create web dashboard server
     let web_dashboard_server = WebDashboardServer::new(config.clone(), daemon_state.telemetry_broadcaster.clone());
+
+    // Initialize fleet agent if enabled
+    let fleet_agent_handle = if config.fleet_mode.enabled {
+        info!("🚀 Fleet mode is enabled, initializing Fleet Agent");
+        
+        // Create telemetry collection channel
+        let (telemetry_tx, telemetry_rx) = mpsc::channel(1000);
+        
+        // Create shutdown channel
+        let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
+        
+        // Create fleet agent
+        let (fleet_agent, mut remote_command_rx) = FleetAgent::new(
+            config.fleet_mode.clone(),
+            telemetry_rx,
+            shutdown_rx,
+        );
+        
+        // Start fleet agent
+        let fleet_handle = tokio::spawn(async move {
+            if let Err(e) = fleet_agent.run().await {
+                error!("Fleet agent error: {}", e);
+            }
+        });
+        
+        // Start remote command handler
+        let daemon_state_clone = daemon_state.clone();
+        tokio::spawn(async move {
+            while let Ok(command) = remote_command_rx.recv().await {
+                info!("Processing remote command: {}", command.command_type);
+                
+                // Handle remote commands here
+                match command.command_type.as_str() {
+                    "START_MINING" => {
+                        info!("Executing remote START_MINING command");
+                        // TODO: Call daemon_state mining start functionality
+                    }
+                    "STOP_MINING" => {
+                        info!("Executing remote STOP_MINING command"); 
+                        // TODO: Call daemon_state mining stop functionality
+                    }
+                    "GET_STATUS" => {
+                        info!("Executing remote GET_STATUS command");
+                        // TODO: Return current daemon status
+                    }
+                    "RESTART_MINER" => {
+                        info!("Executing remote RESTART_MINER command");
+                        // TODO: Restart mining process
+                    }
+                    _ => {
+                        warn!("Unknown remote command: {}", command.command_type);
+                    }
+                }
+            }
+        });
+
+        // Start telemetry forwarder
+        let telemetry_broadcaster = daemon_state.telemetry_broadcaster.clone();
+        tokio::spawn(async move {
+            let mut telemetry_receiver = telemetry_broadcaster.subscribe();
+            let mut telemetry_collector = TelemetryCollector::new();
+            
+            while let Ok(telemetry) = telemetry_receiver.recv().await {
+                // Update telemetry collector with miner data
+                telemetry_collector.update_from_miner_telemetry(&telemetry);
+                
+                // Send to fleet agent
+                let fleet_telemetry = telemetry_collector.get_current_data();
+                if let Err(e) = telemetry_tx.send(fleet_telemetry).await {
+                    error!("Failed to forward telemetry to fleet agent: {}", e);
+                    break;
+                }
+            }
+        });
+        
+        Some(fleet_handle)
+    } else {
+        info!("Fleet mode is disabled");
+        None
+    };
     
     println!("\n🚀 Starting gRPC API server...");
     println!("  Address: {}:{}", config.grpc.bind_address, config.grpc.port);
@@ -691,6 +775,19 @@ async fn serve_grpc_command() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Address: http://127.0.0.1:{}", config.grpc.port + 100);
     println!("  🔒 Dashboard bound to localhost only for security");
     println!("  🔗 WebSocket telemetry streaming enabled");
+    
+    if config.fleet_mode.enabled {
+        println!("\n⚡ Fleet Management Mode: ENABLED");
+        println!("  Controller URL: {}", config.fleet_mode.controller_url);
+        println!("  Rig Name: {}", config.fleet_mode.rig_name);
+        if let Some(location) = &config.fleet_mode.location {
+            println!("  Location: {}", location);
+        }
+        println!("  Remote commands: {}", if config.fleet_mode.allow_remote_commands { "enabled" } else { "disabled" });
+        println!("  API Key: {}", if config.fleet_mode.api_key.is_some() { "configured" } else { "NOT CONFIGURED" });
+    } else {
+        println!("\n⚡ Fleet Management Mode: DISABLED");
+    }
     
     println!("\n💡 Available endpoints:");
     println!("  - GetSystemInfo: Get system and device information");

@@ -7,6 +7,8 @@
 #include <QTimer>
 #include <QDateTime>
 #include <QDebug>
+#include <QInputDialog>
+#include <QLineEdit>
 
 /**
  * MainWindow implementation for BUNKER MINER Client - Phase 2.1
@@ -239,15 +241,15 @@ void MainWindow::setupMainContent() {
     benchmarksLayout->addStretch();
     m_contentStack->addWidget(m_benchmarksPage);
     
-    // Settings page (placeholder)
+    // Settings page with Fleet Management (Phase 4.3)
     m_settingsPage = new QWidget();
     QVBoxLayout *settingsLayout = new QVBoxLayout(m_settingsPage);
     QLabel *settingsTitle = new QLabel("Settings");
     settingsTitle->setStyleSheet("font-size: 24px; font-weight: bold; margin: 16px; color: #2c3e50;");
     settingsLayout->addWidget(settingsTitle);
-    QLabel *settingsPlaceholder = new QLabel("Settings interface will be implemented in Phase 2.3");
-    settingsPlaceholder->setStyleSheet("color: #6c757d; margin: 16px;");
-    settingsLayout->addWidget(settingsPlaceholder);
+    
+    setupFleetManagementSection();
+    settingsLayout->addWidget(m_fleetManagementWidget);
     settingsLayout->addStretch();
     m_contentStack->addWidget(m_settingsPage);
     
@@ -275,6 +277,16 @@ void MainWindow::initializeDaemonClient() {
                      const DaemonGrpcClient::SystemInfo&,
                      const DaemonGrpcClient::VersionInfo&>::of(&DaemonGrpcClient::systemInfoReceived),
             this, &MainWindow::onSystemInfoReceived);
+    
+    // Fleet Management signal connections (Phase 4.3)
+    connect(m_daemonClient.get(), &DaemonGrpcClient::apiKeyGenerated,
+            this, &MainWindow::onApiKeyGenerated);
+    connect(m_daemonClient.get(), &DaemonGrpcClient::apiKeysReceived,
+            this, &MainWindow::onApiKeysReceived);
+    connect(m_daemonClient.get(), &DaemonGrpcClient::apiKeyRevoked,
+            this, &MainWindow::onApiKeyRevoked);
+    connect(m_daemonClient.get(), &DaemonGrpcClient::fleetConnectionStatusReceived,
+            this, &MainWindow::onFleetConnectionStatusChanged);
 }
 
 void MainWindow::onNavigationChanged(int index) {
@@ -309,6 +321,12 @@ void MainWindow::onDaemonConnected() {
     
     // Request system information
     m_daemonClient->getSystemInfo();
+    
+    // Update fleet connection status (Phase 4.3)
+    updateFleetConnectionStatus();
+    
+    // Initial API keys refresh (Phase 4.3)
+    m_daemonClient->getApiKeys();
 }
 
 void MainWindow::onDaemonDisconnected() {
@@ -1319,5 +1337,283 @@ void MainWindow::refreshPoolStats() {
             m_poolStatsUpdateTimer->start();
         }
     });
+}
+
+// Fleet Management implementation (Phase 4.3)
+void MainWindow::setupFleetManagementSection() {
+    m_fleetManagementWidget = new QWidget();
+    m_fleetManagementLayout = new QVBoxLayout(m_fleetManagementWidget);
+    
+    // Fleet Management section header
+    QLabel *fleetTitle = new QLabel("Fleet Management");
+    fleetTitle->setStyleSheet("font-size: 18px; font-weight: bold; margin: 8px 0px; color: #2c3e50;");
+    m_fleetManagementLayout->addWidget(fleetTitle);
+    
+    // Fleet connection status
+    m_fleetConnectionLabel = new QLabel("Fleet Status: Checking connection...");
+    m_fleetConnectionLabel->setStyleSheet("font-size: 14px; margin: 4px 0px; padding: 8px; background-color: #f8f9fa; border-left: 4px solid #ffc107;");
+    m_fleetManagementLayout->addWidget(m_fleetConnectionLabel);
+    
+    // Fleet status section
+    m_fleetStatusLabel = new QLabel("Monitor and manage your mining rig's connection to the BUNKER FLEET Management system.");
+    m_fleetStatusLabel->setStyleSheet("color: #6c757d; margin: 8px 0px;");
+    m_fleetManagementLayout->addWidget(m_fleetStatusLabel);
+    
+    // API Keys management
+    QLabel *apiKeysTitle = new QLabel("API Keys");
+    apiKeysTitle->setStyleSheet("font-size: 16px; font-weight: bold; margin: 16px 0px 8px 0px; color: #2c3e50;");
+    m_fleetManagementLayout->addWidget(apiKeysTitle);
+    
+    // API Keys table
+    m_apiKeysTable = new QTableWidget();
+    m_apiKeysTable->setColumnCount(6);
+    QStringList apiKeyHeaders;
+    apiKeyHeaders << "Key Name" << "Key Prefix" << "Created" << "Last Used" << "Status" << "Description";
+    m_apiKeysTable->setHorizontalHeaderLabels(apiKeyHeaders);
+    m_apiKeysTable->horizontalHeader()->setStretchLastSection(true);
+    m_apiKeysTable->setAlternatingRowColors(true);
+    m_apiKeysTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_apiKeysTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_apiKeysTable->setMaximumHeight(200);
+    m_fleetManagementLayout->addWidget(m_apiKeysTable);
+    
+    // API Key management buttons
+    QHBoxLayout *apiKeyButtonsLayout = new QHBoxLayout();
+    
+    m_generateApiKeyButton = new QPushButton("🔑 Generate New API Key");
+    m_generateApiKeyButton->setStyleSheet(
+        "QPushButton {"
+        "  background-color: #28a745;"
+        "  color: white;"
+        "  border: none;"
+        "  padding: 8px 16px;"
+        "  font-size: 14px;"
+        "  border-radius: 4px;"
+        "  margin: 4px;"
+        "}"
+        "QPushButton:hover {"
+        "  background-color: #218838;"
+        "}"
+    );
+    connect(m_generateApiKeyButton, &QPushButton::clicked, this, &MainWindow::onGenerateApiKeyClicked);
+    apiKeyButtonsLayout->addWidget(m_generateApiKeyButton);
+    
+    m_revokeApiKeyButton = new QPushButton("🗑️ Revoke Selected Key");
+    m_revokeApiKeyButton->setStyleSheet(
+        "QPushButton {"
+        "  background-color: #dc3545;"
+        "  color: white;"
+        "  border: none;"
+        "  padding: 8px 16px;"
+        "  font-size: 14px;"
+        "  border-radius: 4px;"
+        "  margin: 4px;"
+        "}"
+        "QPushButton:hover {"
+        "  background-color: #c82333;"
+        "}"
+    );
+    m_revokeApiKeyButton->setEnabled(false); // Disabled until selection
+    connect(m_revokeApiKeyButton, &QPushButton::clicked, this, &MainWindow::onRevokeApiKeyClicked);
+    apiKeyButtonsLayout->addWidget(m_revokeApiKeyButton);
+    
+    m_refreshApiKeysButton = new QPushButton("🔄 Refresh API Keys");
+    m_refreshApiKeysButton->setStyleSheet(
+        "QPushButton {"
+        "  background-color: #007bff;"
+        "  color: white;"
+        "  border: none;"
+        "  padding: 8px 16px;"
+        "  font-size: 14px;"
+        "  border-radius: 4px;"
+        "  margin: 4px;"
+        "}"
+        "QPushButton:hover {"
+        "  background-color: #0056b3;"
+        "}"
+    );
+    connect(m_refreshApiKeysButton, &QPushButton::clicked, this, &MainWindow::onRefreshApiKeysClicked);
+    apiKeyButtonsLayout->addWidget(m_refreshApiKeysButton);
+    
+    apiKeyButtonsLayout->addStretch();
+    m_fleetManagementLayout->addLayout(apiKeyButtonsLayout);
+    
+    // Connect table selection change to enable/disable revoke button
+    connect(m_apiKeysTable, &QTableWidget::itemSelectionChanged, [this]() {
+        bool hasSelection = !m_apiKeysTable->selectedItems().isEmpty();
+        m_revokeApiKeyButton->setEnabled(hasSelection);
+    });
+    
+    // Update fleet connection status
+    updateFleetConnectionStatus();
+}
+
+void MainWindow::updateFleetConnectionStatus() {
+    // Request fleet connection status from daemon
+    if (m_daemonClient && m_isConnectedToDaemon) {
+        m_daemonClient->getFleetConnectionStatus();
+    } else {
+        m_fleetConnectionLabel->setText("Fleet Status: Daemon not connected");
+        m_fleetConnectionLabel->setStyleSheet("font-size: 14px; margin: 4px 0px; padding: 8px; background-color: #f8f9fa; border-left: 4px solid #dc3545;");
+    }
+}
+
+void MainWindow::updateApiKeysTable(const QVector<DaemonGrpcClient::ApiKeyInfo> &apiKeys) {
+    m_apiKeysTable->setRowCount(apiKeys.size());
+    
+    for (int i = 0; i < apiKeys.size(); ++i) {
+        const auto &apiKey = apiKeys[i];
+        
+        m_apiKeysTable->setItem(i, 0, new QTableWidgetItem(apiKey.keyName));
+        m_apiKeysTable->setItem(i, 1, new QTableWidgetItem(apiKey.keyPrefix + "..."));
+        m_apiKeysTable->setItem(i, 2, new QTableWidgetItem(apiKey.createdAt.toString("yyyy-MM-dd hh:mm")));
+        
+        QString lastUsedText = apiKey.lastUsed.isValid() ? 
+            apiKey.lastUsed.toString("yyyy-MM-dd hh:mm") : "Never";
+        m_apiKeysTable->setItem(i, 3, new QTableWidgetItem(lastUsedText));
+        
+        QString statusText = apiKey.isActive ? "Active" : "Inactive";
+        QTableWidgetItem *statusItem = new QTableWidgetItem(statusText);
+        if (apiKey.isActive) {
+            statusItem->setForeground(QBrush(QColor("#28a745")));
+        } else {
+            statusItem->setForeground(QBrush(QColor("#dc3545")));
+        }
+        m_apiKeysTable->setItem(i, 4, statusItem);
+        
+        m_apiKeysTable->setItem(i, 5, new QTableWidgetItem(apiKey.description));
+        
+        // Store key ID in the first column for reference
+        m_apiKeysTable->item(i, 0)->setData(Qt::UserRole, apiKey.keyId);
+    }
+    
+    // Resize columns to content
+    m_apiKeysTable->resizeColumnsToContents();
+}
+
+void MainWindow::showApiKeyDialog() {
+    // Create a simple input dialog for API key generation
+    bool ok;
+    QString keyName = QInputDialog::getText(this, "Generate API Key", 
+                                           "Enter a name for the new API key:", 
+                                           QLineEdit::Normal, "", &ok);
+    
+    if (ok && !keyName.trimmed().isEmpty()) {
+        QString description = QInputDialog::getText(this, "API Key Description", 
+                                                   "Enter a description (optional):", 
+                                                   QLineEdit::Normal, "", &ok);
+        
+        if (ok) {
+            // Request API key generation from daemon
+            m_daemonClient->generateApiKey(keyName.trimmed(), description.trimmed());
+        }
+    }
+}
+
+// Fleet Management slots implementation (Phase 4.3)
+void MainWindow::onGenerateApiKeyClicked() {
+    if (!m_isConnectedToDaemon) {
+        QMessageBox::warning(this, "Connection Error", 
+                           "Cannot generate API key: Daemon is not connected.");
+        return;
+    }
+    
+    showApiKeyDialog();
+}
+
+void MainWindow::onRevokeApiKeyClicked() {
+    if (!m_isConnectedToDaemon) {
+        QMessageBox::warning(this, "Connection Error", 
+                           "Cannot revoke API key: Daemon is not connected.");
+        return;
+    }
+    
+    QList<QTableWidgetItem*> selectedItems = m_apiKeysTable->selectedItems();
+    if (selectedItems.isEmpty()) {
+        QMessageBox::information(this, "No Selection", 
+                               "Please select an API key to revoke.");
+        return;
+    }
+    
+    // Get the key ID from the first column
+    int selectedRow = selectedItems.first()->row();
+    QTableWidgetItem *keyIdItem = m_apiKeysTable->item(selectedRow, 0);
+    QString keyId = keyIdItem->data(Qt::UserRole).toString();
+    QString keyName = keyIdItem->text();
+    
+    // Confirm revocation
+    int result = QMessageBox::question(this, "Confirm Revocation", 
+                                     QString("Are you sure you want to revoke the API key '%1'?\n\n"
+                                             "This action cannot be undone and will immediately "
+                                             "disable access for this key.").arg(keyName),
+                                     QMessageBox::Yes | QMessageBox::No);
+    
+    if (result == QMessageBox::Yes) {
+        m_daemonClient->revokeApiKey(keyId);
+    }
+}
+
+void MainWindow::onRefreshApiKeysClicked() {
+    if (!m_isConnectedToDaemon) {
+        QMessageBox::warning(this, "Connection Error", 
+                           "Cannot refresh API keys: Daemon is not connected.");
+        return;
+    }
+    
+    // Disable button during refresh
+    m_refreshApiKeysButton->setEnabled(false);
+    m_refreshApiKeysButton->setText("🔄 Refreshing...");
+    
+    // Request API keys from daemon
+    m_daemonClient->getApiKeys();
+    
+    // Re-enable button after a short delay
+    QTimer::singleShot(2000, [this]() {
+        m_refreshApiKeysButton->setEnabled(true);
+        m_refreshApiKeysButton->setText("🔄 Refresh API Keys");
+    });
+}
+
+void MainWindow::onApiKeyGenerated(const QString &keyName, const QString &apiKey) {
+    // Show the generated API key to the user (this is the only time they'll see the full key)
+    QString message = QString("API Key '%1' has been generated successfully!\n\n"
+                             "API Key: %2\n\n"
+                             "⚠️ IMPORTANT: This is the only time you will see the full API key. "
+                             "Please copy and store it securely. You will not be able to retrieve it again.")
+                             .arg(keyName, apiKey);
+    
+    QMessageBox msgBox;
+    msgBox.setWindowTitle("API Key Generated");
+    msgBox.setText(message);
+    msgBox.setIcon(QMessageBox::Information);
+    msgBox.setStandardButtons(QMessageBox::Ok);
+    msgBox.setTextInteractionFlags(Qt::TextSelectableByMouse);
+    msgBox.exec();
+    
+    // Refresh the API keys table
+    onRefreshApiKeysClicked();
+}
+
+void MainWindow::onApiKeysReceived(const QVector<DaemonGrpcClient::ApiKeyInfo> &apiKeys) {
+    updateApiKeysTable(apiKeys);
+}
+
+void MainWindow::onApiKeyRevoked(const QString &keyId) {
+    QMessageBox::information(this, "API Key Revoked", 
+                           "The selected API key has been successfully revoked.");
+    
+    // Refresh the API keys table
+    onRefreshApiKeysClicked();
+}
+
+void MainWindow::onFleetConnectionStatusChanged(bool connected, const QString &status) {
+    QString statusText = QString("Fleet Status: %1").arg(status);
+    m_fleetConnectionLabel->setText(statusText);
+    
+    if (connected) {
+        m_fleetConnectionLabel->setStyleSheet("font-size: 14px; margin: 4px 0px; padding: 8px; background-color: #f8f9fa; border-left: 4px solid #28a745;");
+    } else {
+        m_fleetConnectionLabel->setStyleSheet("font-size: 14px; margin: 4px 0px; padding: 8px; background-color: #f8f9fa; border-left: 4px solid #dc3545;");
+    }
 }
 }

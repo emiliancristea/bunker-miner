@@ -22,6 +22,7 @@ pub struct Config {
     pub profit_switching: ProfitSwitchingConfig,
     pub overclocking: OverclockingConfig,
     pub power_tuning: PowerTuningConfig,
+    pub fleet_mode: FleetModeConfig,
 }
 
 /// Configuration for overclocking features (EXPERT MODE)
@@ -69,6 +70,44 @@ pub struct PowerTuningConfig {
     pub efficiency_targets: HashMap<String, f64>,
     /// Power monitoring interval in seconds
     pub monitoring_interval_seconds: u32,
+}
+
+/// Configuration for fleet mode (centralized management)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FleetModeConfig {
+    /// Whether fleet mode is enabled
+    pub enabled: bool,
+    /// Fleet controller WebSocket URL
+    pub controller_url: String,
+    /// API key for authentication with fleet controller
+    pub api_key: Option<String>,
+    /// Rig identifier (optional, will be auto-assigned if not specified)
+    pub rig_id: Option<String>,
+    /// Rig name for display in dashboard
+    pub rig_name: String,
+    /// Rig location description
+    pub location: Option<String>,
+    /// Connection retry settings
+    pub retry_settings: FleetRetryConfig,
+    /// Telemetry streaming interval in seconds
+    pub telemetry_interval_seconds: u32,
+    /// Enable remote command execution
+    pub allow_remote_commands: bool,
+    /// Allowed remote command types
+    pub allowed_commands: Vec<String>,
+}
+
+/// Retry configuration for fleet connections
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FleetRetryConfig {
+    /// Initial retry delay in seconds
+    pub initial_delay_seconds: u64,
+    /// Maximum retry delay in seconds
+    pub max_delay_seconds: u64,
+    /// Maximum number of retry attempts (0 = unlimited)
+    pub max_attempts: u32,
+    /// Exponential backoff multiplier
+    pub backoff_multiplier: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -267,6 +306,29 @@ impl Default for Config {
                 profiles: HashMap::new(),
                 efficiency_targets: HashMap::new(),
                 monitoring_interval_seconds: 30,
+            },
+            fleet_mode: FleetModeConfig {
+                enabled: false, // Disabled by default
+                controller_url: "wss://api.bunkerminer.com/fleet/ws".to_string(),
+                api_key: None,
+                rig_id: None,
+                rig_name: "BUNKER-RIG".to_string(),
+                location: None,
+                retry_settings: FleetRetryConfig {
+                    initial_delay_seconds: 5,
+                    max_delay_seconds: 300,
+                    max_attempts: 0, // Unlimited retries
+                    backoff_multiplier: 2.0,
+                },
+                telemetry_interval_seconds: 30,
+                allow_remote_commands: true,
+                allowed_commands: vec![
+                    "START_MINING".to_string(),
+                    "STOP_MINING".to_string(),
+                    "RESTART_MINER".to_string(),
+                    "GET_STATUS".to_string(),
+                    "UPDATE_CONFIG".to_string(),
+                ],
             },
         }
     }

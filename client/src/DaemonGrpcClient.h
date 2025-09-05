@@ -94,6 +94,18 @@ public:
         float confidence;
         QString dataSource;
     };
+    
+    // API Key information structure (Phase 4.3)
+    struct ApiKeyInfo {
+        QString keyId;
+        QString keyName;
+        QString keyPrefix;  // First 8 characters of key for display
+        QDateTime createdAt;
+        QDateTime lastUsed;
+        bool isActive;
+        QString permissions;
+        QString description;
+    };
 
     explicit DaemonGrpcClient(QObject *parent = nullptr);
     ~DaemonGrpcClient() override;
@@ -130,6 +142,12 @@ public:
     void getProfitabilityData();
     void startAutoMining(const QString &walletAddress = "");
     void stopAutoMining();
+    
+    // Fleet Management operations (Phase 4.3)
+    void generateApiKey(const QString &keyName, const QString &description = "");
+    void revokeApiKey(const QString &keyId);
+    void getApiKeys();
+    void getFleetConnectionStatus();
 
 signals:
     // Connection signals
@@ -158,6 +176,12 @@ signals:
     // Profitability signals (Phase 2.4)
     void profitabilityDataReceived(const QVector<ProfitabilityInfo> &profitabilityData, 
                                   const QString &recommendedAlgorithm);
+    
+    // Fleet Management signals (Phase 4.3)
+    void apiKeyGenerated(const QString &keyName, const QString &apiKey);
+    void apiKeysReceived(const QVector<ApiKeyInfo> &apiKeys);
+    void apiKeyRevoked(const QString &keyId);
+    void fleetConnectionStatusReceived(bool connected, const QString &status);
 
 private slots:
     void checkConnectionHealth();

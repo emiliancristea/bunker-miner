@@ -4,7 +4,11 @@ use serde::{Deserialize, Serialize};
 use tokio::time;
 use anyhow::{Result, Context};
 use reqwest::Client;
+use tracing::{debug, info, warn, error};
 use crate::config::Config;
+use crate::overclocking::OverclockingEngine;
+use crate::power_tuning::PowerTuningEngine;
+use crate::hardware::MiningDevice;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BunkerPoolStats {
@@ -640,6 +644,8 @@ impl ProfitEngine {
 
 pub struct ProfitEngineService {
     profit_engine: tokio::sync::Mutex<ProfitEngine>,
+    overclocking_engine: std::sync::Arc<tokio::sync::Mutex<OverclockingEngine>>,
+    power_tuning_engine: std::sync::Arc<tokio::sync::Mutex<PowerTuningEngine>>,
     update_interval: Duration,
     is_running: std::sync::atomic::AtomicBool,
 }

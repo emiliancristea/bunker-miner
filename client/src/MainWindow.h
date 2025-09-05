@@ -91,6 +91,15 @@ private slots:
     void onPoolStatsUpdateTimer();
     void onSwitchToBunkerPoolClicked();
     void onPoolStatsReceived();
+    
+    // Fleet Management slots (Phase 4.3)
+    void onGenerateApiKeyClicked();
+    void onRevokeApiKeyClicked();
+    void onRefreshApiKeysClicked();
+    void onApiKeyGenerated(const QString &keyName, const QString &apiKey);
+    void onApiKeysReceived(const QVector<DaemonGrpcClient::ApiKeyInfo> &apiKeys);
+    void onApiKeyRevoked(const QString &keyId);
+    void onFleetConnectionStatusChanged(bool connected, const QString &status);
 
 private:
     void setupUI();
@@ -127,6 +136,12 @@ private:
     void setupPoolStatsPage();
     void updatePoolStatsDisplay();
     void refreshPoolStats();
+    
+    // Fleet Management methods (Phase 4.3)
+    void setupFleetManagementSection();
+    void updateFleetConnectionStatus();
+    void updateApiKeysTable(const QVector<DaemonGrpcClient::ApiKeyInfo> &apiKeys);
+    void showApiKeyDialog();
     
     // UI Layout Components
     QWidget *m_centralWidget;
@@ -185,6 +200,16 @@ private:
     QPushButton *m_refreshPoolStatsButton;
     QPushButton *m_switchToBunkerPoolButton;
     QTimer *m_poolStatsUpdateTimer;
+    
+    // Fleet Management display (Phase 4.3)
+    QWidget *m_fleetManagementWidget;
+    QVBoxLayout *m_fleetManagementLayout;
+    QLabel *m_fleetStatusLabel;
+    QTableWidget *m_apiKeysTable;
+    QPushButton *m_generateApiKeyButton;
+    QPushButton *m_revokeApiKeyButton;
+    QPushButton *m_refreshApiKeysButton;
+    QLabel *m_fleetConnectionLabel;
     
     // Telemetry display (Phase 2.2)
     QWidget *m_telemetryDisplayWidget;
