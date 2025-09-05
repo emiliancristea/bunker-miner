@@ -1,0 +1,274 @@
+# BUNKER POOL - Kubernetes System Namespace Network Policies
+# Securing kube-system namespace with defense-in-depth approach
+
+---
+# Network policy for AWS Load Balancer Controller
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: aws-load-balancer-controller-policy
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: load-balancer
+    app.kubernetes.io/part-of: network-security
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: aws-load-balancer-controller
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow webhook traffic from API server
+  - from:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          component: kube-apiserver
+    ports:
+    - protocol: TCP
+      port: 9443  # Webhook port
+
+  egress:
+  # Allow communication with Kubernetes API server
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          component: kube-apiserver
+    ports:
+    - protocol: TCP
+      port: 443
+  
+  # Allow AWS API calls (ELB, EC2, etc.)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  
+  # Allow health checks to application pods
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: bunker-pool
+    ports:
+    - protocol: TCP
+      port: 8080
+
+---
+# Network policy for CoreDNS
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: coredns-policy
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: dns
+    app.kubernetes.io/part-of: network-security
+spec:
+  podSelector:
+    matchLabels:
+      k8s-app: coredns
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow DNS queries from all pods
+  - from: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+
+  egress:
+  # Allow upstream DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  
+  # Allow communication with Kubernetes API server
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          component: kube-apiserver
+    ports:
+    - protocol: TCP
+      port: 443
+
+---
+# Network policy for EBS CSI Controller
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ebs-csi-controller-policy
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: network-security
+spec:
+  podSelector:
+    matchLabels:
+      app: ebs-csi-controller
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow health checks
+  - from:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 9808  # Health check port
+
+  egress:
+  # Allow communication with Kubernetes API server
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          component: kube-apiserver
+    ports:
+    - protocol: TCP
+      port: 443
+  
+  # Allow AWS API calls for EBS operations
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+
+---
+# Network policy for Cluster Autoscaler
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cluster-autoscaler-policy
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: autoscaler
+    app.kubernetes.io/part-of: network-security
+spec:
+  podSelector:
+    matchLabels:
+      app: cluster-autoscaler
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow metrics scraping from Prometheus
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: bunker-pool
+      podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 8085  # Metrics port
+
+  egress:
+  # Allow communication with Kubernetes API server
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          component: kube-apiserver
+    ports:
+    - protocol: TCP
+      port: 443
+  
+  # Allow AWS API calls for Auto Scaling operations
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+
+---
+# Network policy for kube-proxy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kube-proxy-policy
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: proxy
+    app.kubernetes.io/part-of: network-security
+spec:
+  podSelector:
+    matchLabels:
+      k8s-app: kube-proxy
+  policyTypes:
+  - Egress
+  
+  egress:
+  # Allow communication with Kubernetes API server
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          component: kube-apiserver
+    ports:
+    - protocol: TCP
+      port: 443
+  
+  # Allow service mesh traffic (required for proper networking)
+  - to: []
+    ports:
+    - protocol: TCP
+    - protocol: UDP
+
+---
+# Network policy for AWS VPC CNI
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: aws-vpc-cni-policy
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: cni
+    app.kubernetes.io/part-of: network-security
+spec:
+  podSelector:
+    matchLabels:
+      k8s-app: aws-node
+  policyTypes:
+  - Egress
+  
+  egress:
+  # Allow communication with Kubernetes API server
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          component: kube-apiserver
+    ports:
+    - protocol: TCP
+      port: 443
+  
+  # Allow AWS API calls for VPC operations
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  
+  # Allow IMDS access for instance metadata
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 80

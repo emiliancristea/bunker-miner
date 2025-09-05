@@ -1,0 +1,434 @@
+# BUNKER POOL - Kubernetes NetworkPolicies for Defense-in-Depth Security
+# Default-deny security posture with explicit allow rules
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all-ingress
+  namespace: bunker-pool
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: network-security
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  # No ingress rules means deny all ingress
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all-egress
+  namespace: bunker-pool
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: network-security
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  # No egress rules means deny all egress
+
+---
+# Allow DNS resolution for all pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-resolution
+  namespace: bunker-pool
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: network-security
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  # Allow DNS queries to kube-dns
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow DNS queries to CoreDNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: coredns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+
+---
+# Allow outbound HTTPS for external dependencies (package managers, registries)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-external-https
+  namespace: bunker-pool
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: network-security
+spec:
+  podSelector:
+    matchLabels:
+      network-policy/external-https: "allowed"
+  policyTypes:
+  - Egress
+  egress:
+  - to: []  # Allow to any external destination
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80  # Some package managers use HTTP redirects
+
+---
+# Mining daemon network policy - restrictive access
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mining-daemon-network-policy
+  namespace: bunker-pool
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: mining-daemon
+    app.kubernetes.io/part-of: network-security
+spec:
+  podSelector:
+    matchLabels:
+      app: mining-daemon
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow gRPC API access from client applications
+  - from:
+    - podSelector:
+        matchLabels:
+          app: bunker-client
+    ports:
+    - protocol: TCP
+      port: 9090  # gRPC API port
+  
+  # Allow telemetry access from monitoring
+  - from:
+    - podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 9091  # Telemetry port
+  
+  # Allow health check from load balancer
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: aws-load-balancer-controller
+    ports:
+    - protocol: TCP
+      port: 8080  # Health check port
+
+  egress:
+  # Allow database access
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 5432  # PostgreSQL
+  
+  # Allow Redis access
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 6379  # Redis
+  
+  # Allow external blockchain connections (specific to mining protocols)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 8333   # Bitcoin
+    - protocol: TCP
+      port: 30303  # Ethereum
+    - protocol: TCP
+      port: 4444   # Stratum
+
+---
+# Bunker client network policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bunker-client-network-policy
+  namespace: bunker-pool
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: bunker-client
+    app.kubernetes.io/part-of: network-security
+spec:
+  podSelector:
+    matchLabels:
+      app: bunker-client
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow HTTP/HTTPS from load balancer
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: aws-load-balancer-controller
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+  
+  # Allow WebSocket connections for real-time updates
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: aws-load-balancer-controller
+    ports:
+    - protocol: TCP
+      port: 8080  # WebSocket port
+
+  egress:
+  # Allow communication with mining daemon
+  - to:
+    - podSelector:
+        matchLabels:
+          app: mining-daemon
+    ports:
+    - protocol: TCP
+      port: 9090  # gRPC API
+  
+  # Allow database access for user management
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 5432  # PostgreSQL
+  
+  # Allow Redis access for caching
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 6379  # Redis
+
+---
+# API Gateway network policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-gateway-network-policy
+  namespace: bunker-pool
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: api-gateway
+    app.kubernetes.io/part-of: network-security
+spec:
+  podSelector:
+    matchLabels:
+      app: api-gateway
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow API access from load balancer
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: aws-load-balancer-controller
+    ports:
+    - protocol: TCP
+      port: 8080  # API Gateway port
+  
+  # Allow access from bunker-client for internal API calls
+  - from:
+    - podSelector:
+        matchLabels:
+          app: bunker-client
+    ports:
+    - protocol: TCP
+      port: 8080
+
+  egress:
+  # Allow communication with mining daemon
+  - to:
+    - podSelector:
+        matchLabels:
+          app: mining-daemon
+    ports:
+    - protocol: TCP
+      port: 9090  # gRPC API
+  
+  # Allow database access
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 5432  # PostgreSQL
+  
+  # Allow Redis access
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 6379  # Redis
+
+---
+# Monitoring and observability network policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitoring-network-policy
+  namespace: bunker-pool
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: network-security
+spec:
+  podSelector:
+    matchLabels:
+      app: prometheus
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow Grafana to query Prometheus
+  - from:
+    - podSelector:
+        matchLabels:
+          app: grafana
+    ports:
+    - protocol: TCP
+      port: 9090  # Prometheus port
+
+  egress:
+  # Allow scraping metrics from all BUNKER POOL components
+  - to:
+    - podSelector:
+        matchLabels:
+          app: mining-daemon
+    ports:
+    - protocol: TCP
+      port: 9091  # Telemetry port
+  
+  - to:
+    - podSelector:
+        matchLabels:
+          app: bunker-client
+    ports:
+    - protocol: TCP
+      port: 9091  # Telemetry port
+  
+  - to:
+    - podSelector:
+        matchLabels:
+          app: api-gateway
+    ports:
+    - protocol: TCP
+      port: 9091  # Telemetry port
+
+---
+# Grafana network policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: grafana-network-policy
+  namespace: bunker-pool
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: grafana
+    app.kubernetes.io/part-of: network-security
+spec:
+  podSelector:
+    matchLabels:
+      app: grafana
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow dashboard access from load balancer
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: aws-load-balancer-controller
+    ports:
+    - protocol: TCP
+      port: 3000  # Grafana port
+
+  egress:
+  # Allow querying Prometheus
+  - to:
+    - podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 9090  # Prometheus port
+
+---
+# Emergency access network policy (for debugging - should be temporary)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: emergency-debug-access
+  namespace: bunker-pool
+  labels:
+    app.kubernetes.io/name: bunker-pool
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: network-security
+  annotations:
+    security.bunker-pool.com/emergency: "true"
+    security.bunker-pool.com/expires: "2024-12-31"
+spec:
+  podSelector:
+    matchLabels:
+      security.bunker-pool.com/debug-access: "emergency"
+  policyTypes:
+  - Egress
+  egress:
+  # Allow temporary full egress for debugging (REMOVE IN PRODUCTION)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 22   # SSH
+    - protocol: TCP  
+      port: 443  # HTTPS
+    - protocol: TCP
+      port: 80   # HTTP
