@@ -78,12 +78,16 @@ set(SOURCES
     src/main.cpp
     src/MainWindow.cpp
     src/DaemonGrpcClient.cpp
+    src/TelemetryWorker.cpp
+    src/DeviceTelemetryWidget.cpp
     # Additional source files will be added in Phase 2
 )
 
 set(HEADERS
     src/MainWindow.h
     src/DaemonGrpcClient.h
+    src/TelemetryWorker.h
+    src/DeviceTelemetryWidget.h
     # Additional headers will be added in Phase 2
 )
 

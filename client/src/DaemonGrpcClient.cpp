@@ -1,19 +1,25 @@
 #include "DaemonGrpcClient.h"
+#include "TelemetryWorker.h"
 #include <QDebug>
 #include <QTimer>
 #include <QDateTime>
+#include <QThread>
 #include <google/protobuf/empty.pb.h>
 
 /**
- * DaemonGrpcClient implementation - Phase 2.1
+ * DaemonGrpcClient implementation - Phase 2.2
  * 
- * Complete gRPC client implementation for BUNKER MINER daemon communication.
- * Features:
+ * Enhanced gRPC client implementation for BUNKER MINER daemon communication
+ * with real-time telemetry streaming and mining control capabilities.
+ * 
+ * Phase 2.2 Features:
+ * - Real-time telemetry streaming with TelemetryWorker thread management
+ * - Complete mining control operations (start/stop with state validation)
+ * - Thread-safe telemetry data relay to UI components
+ * - Mining state tracking and error handling
  * - Secure localhost-only connection by default
  * - Comprehensive error handling and connection retry logic
  * - Health monitoring with automatic reconnection
- * - Protocol Buffer to Qt data structure conversion
- * - Thread-safe operation with Qt signal/slot integration
  */
 
 DaemonGrpcClient::DaemonGrpcClient(QObject *parent)
@@ -25,8 +31,14 @@ DaemonGrpcClient::DaemonGrpcClient(QObject *parent)
     , m_healthCheckTimer(new QTimer(this))
     , m_reconnectTimer(new QTimer(this))
     , m_connectionRetryCount(0)
+    , m_miningActive(false)
+    , m_telemetryWorker(nullptr)
+    , m_telemetryThread(nullptr)
+    , m_telemetryStreamActive(false)
 {
-    qDebug() << "DaemonGrpcClient initialized for BUNKER MINER daemon communication";
+    qDebug() << "DaemonGrpcClient initialized for BUNKER MINER daemon communication with telemetry streaming";
+    
+    initializeMiningState();
     
     // Configure health check timer
     m_healthCheckTimer->setSingleShot(false);
@@ -45,6 +57,15 @@ DaemonGrpcClient::DaemonGrpcClient(QObject *parent)
 }
 
 DaemonGrpcClient::~DaemonGrpcClient() {
+    // Stop telemetry streaming first
+    stopTelemetryStream();
+    cleanupTelemetryWorker();
+    
+    // Stop mining if active
+    if (m_miningActive.load()) {
+        stopMiningOperation();
+    }
+    
     cleanupGrpcClient();
 }
 
@@ -457,4 +478,286 @@ DaemonGrpcClient::VersionInfo DaemonGrpcClient::convertVersionInfo(const bunker:
     version.gitCommit = QString::fromStdString(pbVersion.git_commit());
     
     return version;
+}
+
+// ============================================================================
+// PHASE 2.2 - MINING CONTROL OPERATIONS
+// ============================================================================
+
+void DaemonGrpcClient::startMiningOperation(const QString &algorithm, 
+                                           const QString &poolUrl, 
+                                           const QString &walletAddress) {
+    if (!m_connected || !m_grpcStub) {
+        emit miningError("Not connected to daemon - cannot start mining");
+        return;
+    }
+    
+    if (m_miningActive.load()) {
+        emit miningError("Mining already active - stop current mining before starting new operation");
+        return;
+    }
+    
+    qDebug() << "Starting mining operation with algorithm:" << algorithm << "pool:" << poolUrl;
+    
+    try {
+        ClientContext context;
+        bunker::daemon::v1::StartMiningRequest request;
+        bunker::daemon::v1::CommandResponse response;
+        
+        // Configure mining request
+        auto* config = request.mutable_config();
+        config->set_algorithm(algorithm.toStdString());
+        config->set_pool_url(poolUrl.toStdString());
+        config->set_pool_port(443); // Default SSL port
+        config->set_worker_name("bunker-miner-client");
+        
+        if (!walletAddress.isEmpty()) {
+            config->set_wallet_address(walletAddress.toStdString());
+        }
+        
+        config->set_intensity(1.0f); // Maximum intensity
+        
+        request.set_stop_existing(true); // Stop any existing mining
+        request.set_timeout_seconds(30); // 30 second timeout
+        
+        // Set timeout for the call
+        context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(30));
+        
+        Status status = m_grpcStub->StartMining(&context, request, &response);
+        
+        if (status.ok()) {
+            if (response.status() == bunker::daemon::v1::CommandResponse::STATUS_SUCCESS) {
+                updateMiningState(true, algorithm);
+                m_currentPoolUrl = poolUrl;
+                m_currentWalletAddress = walletAddress;
+                
+                emit miningStarted(algorithm);
+                qDebug() << "Mining started successfully with algorithm:" << algorithm;
+                
+                // Automatically start telemetry streaming when mining starts
+                startTelemetryStream();
+                
+            } else {
+                QString errorMsg = QString("Mining start failed: %1")
+                                  .arg(QString::fromStdString(response.message()));
+                qWarning() << errorMsg;
+                emit miningError(errorMsg);
+            }
+        } else {
+            QString errorMsg = QString("StartMining RPC failed: %1 (%2)")
+                              .arg(QString::fromStdString(status.error_message()))
+                              .arg(status.error_code());
+            qWarning() << errorMsg;
+            emit miningError(errorMsg);
+        }
+    } catch (const std::exception &e) {
+        QString errorMsg = QString("Mining start exception: %1").arg(e.what());
+        qWarning() << errorMsg;
+        emit miningError(errorMsg);
+    }
+}
+
+void DaemonGrpcClient::stopMiningOperation() {
+    if (!m_connected || !m_grpcStub) {
+        emit miningError("Not connected to daemon - cannot stop mining");
+        return;
+    }
+    
+    qDebug() << "Stopping mining operation";
+    
+    // Stop telemetry stream first
+    stopTelemetryStream();
+    
+    try {
+        ClientContext context;
+        bunker::daemon::v1::StopMiningRequest request;
+        bunker::daemon::v1::CommandResponse response;
+        
+        request.set_force_stop(false); // Graceful stop
+        request.set_timeout_seconds(15); // 15 second timeout
+        
+        context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(20));
+        
+        Status status = m_grpcStub->StopMining(&context, request, &response);
+        
+        if (status.ok()) {
+            if (response.status() == bunker::daemon::v1::CommandResponse::STATUS_SUCCESS) {
+                updateMiningState(false);
+                emit miningStopped();
+                qDebug() << "Mining stopped successfully";
+            } else {
+                QString errorMsg = QString("Mining stop failed: %1")
+                                  .arg(QString::fromStdString(response.message()));
+                qWarning() << errorMsg;
+                emit miningError(errorMsg);
+            }
+        } else {
+            QString errorMsg = QString("StopMining RPC failed: %1 (%2)")
+                              .arg(QString::fromStdString(status.error_message()))
+                              .arg(status.error_code());
+            qWarning() << errorMsg;
+            emit miningError(errorMsg);
+        }
+    } catch (const std::exception &e) {
+        QString errorMsg = QString("Mining stop exception: %1").arg(e.what());
+        qWarning() << errorMsg;
+        emit miningError(errorMsg);
+    }
+}
+
+bool DaemonGrpcClient::isMiningActive() const {
+    return m_miningActive.load();
+}
+
+QString DaemonGrpcClient::getCurrentMiningAlgorithm() const {
+    return m_currentAlgorithm;
+}
+
+// ============================================================================
+// PHASE 2.2 - TELEMETRY STREAMING MANAGEMENT
+// ============================================================================
+
+void DaemonGrpcClient::startTelemetryStream() {
+    if (!m_connected) {
+        emit telemetryStreamError("Not connected to daemon - cannot start telemetry stream");
+        return;
+    }
+    
+    if (m_telemetryStreamActive.load()) {
+        qDebug() << "Telemetry stream already active";
+        return;
+    }
+    
+    qDebug() << "Starting telemetry stream";
+    
+    setupTelemetryWorker();
+    
+    if (m_telemetryWorker && m_telemetryThread) {
+        m_telemetryWorker->startTelemetryStream(m_daemonAddress);
+        m_telemetryStreamActive.store(true);
+    }
+}
+
+void DaemonGrpcClient::stopTelemetryStream() {
+    if (!m_telemetryStreamActive.load()) {
+        return;
+    }
+    
+    qDebug() << "Stopping telemetry stream";
+    
+    if (m_telemetryWorker) {
+        m_telemetryWorker->stopTelemetryStream();
+    }
+    
+    m_telemetryStreamActive.store(false);
+}
+
+bool DaemonGrpcClient::isTelemetryStreamActive() const {
+    return m_telemetryStreamActive.load();
+}
+
+// ============================================================================
+// PHASE 2.2 - PRIVATE IMPLEMENTATION METHODS
+// ============================================================================
+
+void DaemonGrpcClient::initializeMiningState() {
+    m_miningActive.store(false);
+    m_currentAlgorithm.clear();
+    m_currentPoolUrl.clear();
+    m_currentWalletAddress.clear();
+    m_telemetryStreamActive.store(false);
+}
+
+void DaemonGrpcClient::updateMiningState(bool active, const QString &algorithm) {
+    m_miningActive.store(active);
+    
+    if (active) {
+        m_currentAlgorithm = algorithm;
+    } else {
+        m_currentAlgorithm.clear();
+        m_currentPoolUrl.clear();
+        m_currentWalletAddress.clear();
+    }
+}
+
+void DaemonGrpcClient::setupTelemetryWorker() {
+    if (m_telemetryWorker && m_telemetryThread) {
+        return; // Already set up
+    }
+    
+    // Create worker thread
+    m_telemetryThread = new QThread(this);
+    
+    // Create worker object
+    m_telemetryWorker = new TelemetryWorker();
+    
+    // Move worker to thread (this must be done before connecting signals)
+    m_telemetryWorker->moveToThread(m_telemetryThread);
+    
+    // Connect worker signals to client slots for signal relay
+    connect(m_telemetryWorker, &TelemetryWorker::streamStarted,
+            this, &DaemonGrpcClient::onTelemetryStreamStarted);
+    connect(m_telemetryWorker, &TelemetryWorker::streamStopped,
+            this, &DaemonGrpcClient::onTelemetryStreamStopped);
+    connect(m_telemetryWorker, &TelemetryWorker::streamError,
+            this, &DaemonGrpcClient::onTelemetryStreamError);
+    
+    // Connect worker telemetry data signal directly to MainWindow
+    // (MainWindow will connect to this signal for real-time updates)
+    
+    // Connect thread lifecycle
+    connect(m_telemetryThread, &QThread::started, m_telemetryWorker, &TelemetryWorker::processTelemetryStream);
+    connect(m_telemetryThread, &QThread::finished, m_telemetryWorker, &QObject::deleteLater);
+    
+    // Start the thread
+    m_telemetryThread->start();
+    
+    qDebug() << "Telemetry worker thread initialized and started";
+}
+
+void DaemonGrpcClient::cleanupTelemetryWorker() {
+    if (m_telemetryThread && m_telemetryThread->isRunning()) {
+        qDebug() << "Cleaning up telemetry worker thread";
+        
+        // Stop the thread gracefully
+        m_telemetryThread->quit();
+        
+        if (!m_telemetryThread->wait(3000)) { // Wait up to 3 seconds
+            qWarning() << "Telemetry thread did not shut down gracefully, terminating";
+            m_telemetryThread->terminate();
+            m_telemetryThread->wait(1000);
+        }
+    }
+    
+    m_telemetryWorker = nullptr; // Will be deleted by thread
+    
+    if (m_telemetryThread) {
+        m_telemetryThread->deleteLater();
+        m_telemetryThread = nullptr;
+    }
+    
+    m_telemetryStreamActive.store(false);
+    
+    qDebug() << "Telemetry worker cleanup completed";
+}
+
+// ============================================================================
+// PHASE 2.2 - TELEMETRY WORKER SIGNAL RELAY SLOTS
+// ============================================================================
+
+void DaemonGrpcClient::onTelemetryStreamStarted() {
+    qDebug() << "Telemetry stream started successfully";
+    emit telemetryStreamStarted();
+}
+
+void DaemonGrpcClient::onTelemetryStreamStopped() {
+    qDebug() << "Telemetry stream stopped";
+    m_telemetryStreamActive.store(false);
+    emit telemetryStreamStopped();
+}
+
+void DaemonGrpcClient::onTelemetryStreamError(const QString &error) {
+    qWarning() << "Telemetry stream error:" << error;
+    m_telemetryStreamActive.store(false);
+    emit telemetryStreamError(error);
 }
