@@ -55,7 +55,7 @@ jobs:
             pkg-config
 
       - name: Install protoc
-        uses: arduino/setup-protoc@v2
+        uses: arduino/setup-protoc@v3
         with:
           version: '24.4'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -137,7 +137,7 @@ jobs:
           cmake-version: ${{ env.CMAKE_VERSION }}
 
       - name: Install protoc
-        uses: arduino/setup-protoc@v2
+        uses: arduino/setup-protoc@v3
         with:
           version: '24.4'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
