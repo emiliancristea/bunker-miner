@@ -156,13 +156,7 @@ impl MinerAdapter for LolMinerAdapter {
             _ => return Err(anyhow!("Unsupported coin for lolMiner: {}", wallet.coin)),
         }
 
-        // Pool configuration
-        let pool_url = if pool.ssl {
-            format!("ssl://{}:{}", pool.url, pool.port)
-        } else {
-            format!("{}:{}", pool.url, pool.port)
-        };
-        args.push(format!("--pool={}", pool_url));
+        args.push(format!("--pool={}", build_pool_endpoint(pool, "ssl")));
 
         // Wallet address
         args.push(format!("--user={}", wallet.address));
@@ -326,20 +320,12 @@ impl MinerAdapter for XMRigAdapter {
         let wallet = config.get_active_wallet()?;
         let pool = config.get_active_pool()?;
 
-        let mut args = vec![];
-
-        // Pool configuration
-        let pool_url = if pool.ssl {
-            format!("tls://{}:{}", pool.url, pool.port)
-        } else {
-            format!("{}:{}", pool.url, pool.port)
-        };
-        args.push("-o".to_string());
-        args.push(pool_url);
-
-        // Wallet address
-        args.push("-u".to_string());
-        args.push(wallet.address.clone());
+        let mut args = vec![
+            "-o".to_string(),
+            build_pool_endpoint(pool, "tls"),
+            "-u".to_string(),
+            wallet.address.clone(),
+        ];
 
         // Worker name (password field in XMRig)
         if let Some(worker) = &pool.worker_name {
@@ -987,6 +973,23 @@ impl ProcessSupervisor {
     }
 }
 
+fn build_pool_endpoint(pool: &crate::config::PoolConfig, secure_scheme: &str) -> String {
+    let raw_url = pool.url.trim().trim_end_matches('/');
+    let (host, scheme_requests_tls) = match raw_url.split_once("://") {
+        Some((scheme, host)) => {
+            let scheme = scheme.to_ascii_lowercase();
+            (host, scheme.contains("ssl") || scheme.contains("tls"))
+        }
+        None => (raw_url, false),
+    };
+
+    if pool.ssl || scheme_requests_tls {
+        format!("{secure_scheme}://{}:{}", host, pool.port)
+    } else {
+        format!("{}:{}", host, pool.port)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1080,6 +1083,8 @@ mod tests {
         let args = adapter.build_args(&config, &device_ids).unwrap();
 
         assert!(args.contains(&"--algo=ETHASH".to_string()));
+        assert!(args.contains(&"--pool=ssl://pool.bunkerminer.com:3334".to_string()));
+        assert!(!args.iter().any(|arg| arg.contains("ssl://stratum")));
         assert!(args
             .iter()
             .any(|arg| arg.contains("742d35Cc6635C0532925a3b8D400cdFb7021f39f")));
@@ -1105,6 +1110,7 @@ mod tests {
         assert!(args.contains(&"rx/0".to_string()));
         assert!(args.contains(&"-t".to_string()));
         assert!(args.contains(&"8".to_string()));
+        assert!(args.contains(&"pool.minexmr.com:4444".to_string()));
     }
 
     #[test]
