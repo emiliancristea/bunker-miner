@@ -4,12 +4,17 @@ use dirs::config_dir;
 use secrecy::{ExposeSecret, Secret};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::overclocking::OverclockProfile;
 use crate::power_tuning::PowerTuningProfile;
+
+pub const CONFIG_DIR_ENV: &str = "BUNKER_MINER_CONFIG_DIR";
+pub const CONFIG_PASSWORD_ENV: &str = "BUNKER_MINER_CONFIG_PASSWORD";
+pub const CONFIG_PASSWORD_FILE_ENV: &str = "BUNKER_MINER_CONFIG_PASSWORD_FILE";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -366,11 +371,19 @@ pub struct ConfigManager {
 
 impl ConfigManager {
     pub fn new() -> Result<Self> {
-        let config_dir = config_dir()
-            .ok_or_else(|| anyhow!("Could not determine config directory"))?
-            .join("bunker-miner");
+        let config_dir = match env::var_os(CONFIG_DIR_ENV) {
+            Some(path) => PathBuf::from(path),
+            None => config_dir()
+                .ok_or_else(|| anyhow!("Could not determine config directory"))?
+                .join("bunker-miner"),
+        };
 
-        fs::create_dir_all(&config_dir).context("Failed to create config directory")?;
+        Self::from_config_dir(config_dir)
+    }
+
+    pub fn from_config_dir(config_dir: impl AsRef<Path>) -> Result<Self> {
+        let config_dir = config_dir.as_ref();
+        fs::create_dir_all(config_dir).context("Failed to create config directory")?;
 
         let config_path = config_dir.join("config.toml.encrypted");
 
@@ -392,8 +405,7 @@ impl ConfigManager {
         let encrypted_data =
             fs::read(&self.config_path).context("Failed to read encrypted config file")?;
 
-        // Get password from user
-        let password = self.prompt_password("Enter configuration password: ")?;
+        let password = self.resolve_password("Enter configuration password: ")?;
 
         // Decrypt the data
         let decrypted_data = self
@@ -404,8 +416,10 @@ impl ConfigManager {
         let config: Config =
             toml::from_str(&decrypted_data).context("Failed to parse configuration file")?;
 
-        // Validate configuration
-        self.validate_config(&config)?;
+        // Validate configuration structure. Mining readiness is checked only when
+        // a mining process is actually started, because a fresh install may
+        // intentionally contain placeholder wallets until the user configures it.
+        self.validate_config_structure(&config)?;
 
         println!("✓ Configuration loaded and validated successfully");
 
@@ -417,29 +431,44 @@ impl ConfigManager {
         config: &Config,
         password: Option<&Secret<String>>,
     ) -> Result<()> {
-        // Validate configuration before saving
+        // Validate configuration before saving a mining-ready user config.
         self.validate_config(config)?;
 
         // Serialize to TOML
         let toml_data =
             toml::to_string_pretty(config).context("Failed to serialize configuration to TOML")?;
 
-        // Get or prompt for password
         let password = match password {
             Some(pwd) => pwd.clone(),
-            None => self.prompt_password("Enter password to encrypt configuration: ")?,
+            None => self.resolve_password("Enter password to encrypt configuration: ")?,
         };
 
-        // Encrypt the data
-        let encrypted_data = self
-            .encrypt_data(&toml_data, &password)
-            .context("Failed to encrypt configuration data")?;
-
-        // Write to file
-        fs::write(&self.config_path, encrypted_data)
-            .context("Failed to write encrypted config file")?;
+        self.write_encrypted_config(&toml_data, &password)?;
 
         println!("✓ Configuration saved and encrypted successfully");
+        println!("  Location: {}", self.config_path.display());
+
+        Ok(())
+    }
+
+    async fn save_config_template(
+        &self,
+        config: &Config,
+        password: Option<&Secret<String>>,
+    ) -> Result<()> {
+        self.validate_config_structure(config)?;
+
+        let toml_data =
+            toml::to_string_pretty(config).context("Failed to serialize configuration to TOML")?;
+
+        let password = match password {
+            Some(pwd) => pwd.clone(),
+            None => self.resolve_new_password()?,
+        };
+
+        self.write_encrypted_config(&toml_data, &password)?;
+
+        println!("✓ Configuration template saved and encrypted successfully");
         println!("  Location: {}", self.config_path.display());
 
         Ok(())
@@ -456,7 +485,7 @@ impl ConfigManager {
         println!("   If you forget this password, your configuration will be unrecoverable!");
         println!();
 
-        let password = self.prompt_new_password()?;
+        let password = self.resolve_new_password()?;
 
         let config = Config::default();
 
@@ -465,7 +494,7 @@ impl ConfigManager {
         println!("   You can edit the encrypted file later with the 'config edit' command");
         println!();
 
-        self.save_config(&config, Some(&password)).await?;
+        self.save_config_template(&config, Some(&password)).await?;
 
         println!();
         println!("✅ Initial configuration created successfully!");
@@ -512,6 +541,73 @@ impl ConfigManager {
         }
     }
 
+    fn resolve_password(&self, prompt: &str) -> Result<Secret<String>> {
+        if let Some(password) = self.password_from_environment()? {
+            return Ok(password);
+        }
+
+        self.prompt_password(prompt)
+    }
+
+    fn resolve_new_password(&self) -> Result<Secret<String>> {
+        if let Some(password) = self.password_from_environment()? {
+            self.validate_new_password(&password)?;
+            return Ok(password);
+        }
+
+        self.prompt_new_password()
+    }
+
+    fn password_from_environment(&self) -> Result<Option<Secret<String>>> {
+        let direct_password = env::var(CONFIG_PASSWORD_ENV).ok();
+        let password_file = env::var(CONFIG_PASSWORD_FILE_ENV).ok();
+
+        match (direct_password, password_file) {
+            (Some(_), Some(_)) => Err(anyhow!(
+                "{} and {} cannot both be set",
+                CONFIG_PASSWORD_ENV,
+                CONFIG_PASSWORD_FILE_ENV
+            )),
+            (Some(password), None) => self.non_empty_password(password).map(Some),
+            (None, Some(path)) => {
+                let password = fs::read_to_string(&path)
+                    .with_context(|| format!("Failed to read password file '{}'", path))?;
+                self.non_empty_password(password.trim_end_matches(['\r', '\n']).to_string())
+                    .map(Some)
+            }
+            (None, None) => Ok(None),
+        }
+    }
+
+    fn non_empty_password(&self, password: String) -> Result<Secret<String>> {
+        if password.is_empty() {
+            return Err(anyhow!("Configuration password cannot be empty"));
+        }
+
+        Ok(Secret::new(password))
+    }
+
+    fn validate_new_password(&self, password: &Secret<String>) -> Result<()> {
+        if password.expose_secret().len() < 8 {
+            return Err(anyhow!(
+                "Configuration password from environment must be at least 8 characters long"
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn write_encrypted_config(&self, toml_data: &str, password: &Secret<String>) -> Result<()> {
+        let encrypted_data = self
+            .encrypt_data(toml_data, password)
+            .context("Failed to encrypt configuration data")?;
+
+        fs::write(&self.config_path, encrypted_data)
+            .context("Failed to write encrypted config file")?;
+
+        Ok(())
+    }
+
     fn encrypt_data(&self, data: &str, password: &Secret<String>) -> Result<Vec<u8>> {
         let encryptor = Encryptor::with_user_passphrase(password.clone());
 
@@ -552,6 +648,18 @@ impl ConfigManager {
     }
 
     pub fn validate_config(&self, config: &Config) -> Result<()> {
+        self.validate_config_with_options(config, false)
+    }
+
+    pub fn validate_config_structure(&self, config: &Config) -> Result<()> {
+        self.validate_config_with_options(config, true)
+    }
+
+    fn validate_config_with_options(
+        &self,
+        config: &Config,
+        allow_placeholder_wallet: bool,
+    ) -> Result<()> {
         // Validate active references exist
         if !config.wallets.contains_key(&config.mining.active_wallet) {
             return Err(anyhow!(
@@ -569,8 +677,8 @@ impl ConfigManager {
 
         // Validate wallet addresses are not defaults
         let active_wallet = &config.wallets[&config.mining.active_wallet];
-        if active_wallet.address.starts_with("0x0000000000000000000")
-            || active_wallet.address.starts_with("4444444444444444444")
+        if !allow_placeholder_wallet
+            && Config::wallet_address_is_placeholder(&active_wallet.address)
         {
             return Err(anyhow!("Please update your wallet address - default placeholder addresses cannot be used for mining"));
         }
@@ -653,6 +761,39 @@ impl ConfigManager {
 }
 
 impl Config {
+    pub fn validate_mining_ready(&self) -> Result<()> {
+        let active_wallet = self.get_active_wallet()?;
+        let active_pool = self.get_active_pool()?;
+
+        if Self::wallet_address_is_placeholder(&active_wallet.address) {
+            return Err(anyhow!(
+                "Please update your wallet address - default placeholder addresses cannot be used for mining"
+            ));
+        }
+
+        if active_wallet.coin != self.mining.active_coin {
+            return Err(anyhow!(
+                "Active wallet coin '{}' does not match active mining coin '{}'",
+                active_wallet.coin,
+                self.mining.active_coin
+            ));
+        }
+
+        if active_pool.coin != self.mining.active_coin {
+            return Err(anyhow!(
+                "Active pool coin '{}' does not match active mining coin '{}'",
+                active_pool.coin,
+                self.mining.active_coin
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn wallet_address_is_placeholder(address: &str) -> bool {
+        address.starts_with("0x0000000000000000000") || address.starts_with("4444444444444444444")
+    }
+
     pub fn get_active_wallet(&self) -> Result<&WalletConfig> {
         self.wallets
             .get(&self.mining.active_wallet)
@@ -728,6 +869,28 @@ mod tests {
             .address = "0x742d35Cc6635C0532925a3b8D400cdFb7021f39f".to_string();
 
         assert!(config_manager.validate_config(&valid_config).is_ok());
+    }
+
+    #[test]
+    fn test_config_structure_allows_initial_placeholder_wallet() {
+        let config_manager = ConfigManager {
+            config_path: PathBuf::new(),
+        };
+        let config = Config::default();
+
+        assert!(config_manager.validate_config_structure(&config).is_ok());
+        assert!(config.validate_mining_ready().is_err());
+    }
+
+    #[test]
+    fn test_config_manager_can_use_explicit_config_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_manager = ConfigManager::from_config_dir(temp_dir.path()).unwrap();
+
+        assert_eq!(
+            config_manager.get_config_path(),
+            &temp_dir.path().join("config.toml.encrypted")
+        );
     }
 
     #[test]

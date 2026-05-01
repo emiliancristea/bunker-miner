@@ -59,6 +59,10 @@ The daemon is now part of the enforced workspace. The promoted baseline includes
 
 Automatic third-party miner downloads remain disabled until signed release manifest support and archive extraction are implemented. If a miner binary is missing or lacks a trusted SHA-256, daemon startup fails with an explicit installation error instead of reporting fake success.
 
+Daemon service startup now supports non-interactive configuration through `BUNKER_MINER_CONFIG_DIR`, `BUNKER_MINER_CONFIG_PASSWORD`, and `BUNKER_MINER_CONFIG_PASSWORD_FILE`. Fresh encrypted config templates may contain placeholder wallets, but mining startup still rejects placeholder wallets.
+
 ## CLI Promotion Notes
 
 The CLI is now part of the enforced workspace. The promoted baseline includes generated protobuf compatibility with `protos/daemon_api.v1.proto`, strict command parsing, real `StartMiningRequest` construction, `StopMining` support, telemetry streaming, config get/set, and parser unit tests.
+
+Manual smoke evidence on 2026-05-01: `bunker-miner-daemon serve` started with a temporary config dir and env-provided config password; `bunker-miner-cli health` returned `HEALTHY`; `bunker-miner-cli start --algorithm randomx ...` reached the structured `MINER_BINARY_UNAVAILABLE` response because no trusted XMRig binary was installed.

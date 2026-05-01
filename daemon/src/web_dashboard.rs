@@ -54,7 +54,7 @@ impl WebDashboardServer {
         info!("Web dashboard server listening on {}", addr);
         info!("Dashboard URL: http://{}", addr);
 
-        axum::Server::bind(&addr)
+        axum::Server::try_bind(&addr)?
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())
             .await?;
 

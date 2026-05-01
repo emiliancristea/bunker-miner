@@ -451,6 +451,7 @@ async fn start_mining_command(
     // Initialize configuration manager
     let mut config_manager = ConfigManager::new()?;
     let config = config_manager.load_config().await?;
+    config_manager.validate_config(&config)?;
 
     info!("✓ Configuration loaded successfully");
 
@@ -912,9 +913,18 @@ async fn serve_grpc_command() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n💡 Press Ctrl+C to stop both servers");
 
-    // Start both servers concurrently
+    // The web dashboard is useful, but it must not take down the daemon's
+    // control plane when its secondary port is unavailable.
+    let dashboard_handle = tokio::spawn(async move {
+        if let Err(error) = web_dashboard_server.start().await {
+            warn!("Web dashboard unavailable: {}", error);
+        }
+    });
+
+    // Start the gRPC control plane and keep the optional dashboard in the background.
     tokio::select! {
         result = grpc_server.start() => {
+            dashboard_handle.abort();
             match result {
                 Ok(()) => {
                     info!("gRPC server shut down normally");
@@ -925,18 +935,8 @@ async fn serve_grpc_command() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        result = web_dashboard_server.start() => {
-            match result {
-                Ok(()) => {
-                    info!("Web dashboard server shut down normally");
-                }
-                Err(e) => {
-                    error!("Web dashboard server error: {}", e);
-                    return Err(e.into());
-                }
-            }
-        }
         _ = tokio::signal::ctrl_c() => {
+            dashboard_handle.abort();
             println!("\n\n🛑 Received shutdown signal...");
             info!("Shutting down gRPC server and web dashboard");
             println!("✅ Servers stopped");

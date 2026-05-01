@@ -239,6 +239,9 @@ impl BunkerMinerDaemon for BunkerMinerDaemonImpl {
         let mut config = self.state.config.read().await.clone();
         let target_device_ids =
             apply_grpc_mining_config(&mut config, req.config).map_err(Status::invalid_argument)?;
+        config
+            .validate_mining_ready()
+            .map_err(|error| Status::invalid_argument(error.to_string()))?;
         let miner_device_ids =
             normalize_miner_device_ids(&target_device_ids, &config.mining.active_coin);
 
@@ -256,10 +259,22 @@ impl BunkerMinerDaemon for BunkerMinerDaemonImpl {
 
         let binary_path = {
             let miner_manager = self.state.miner_manager.read().await;
-            miner_manager
-                .ensure_binary_available(&adapter)
-                .await
-                .map_err(|error| Status::failed_precondition(error.to_string()))?
+            match miner_manager.ensure_binary_available(&adapter).await {
+                Ok(binary_path) => binary_path,
+                Err(error) => {
+                    return Ok(Response::new(command_error(
+                        "MINER_BINARY_UNAVAILABLE",
+                        error.to_string(),
+                        [
+                            "Install the selected miner binary manually",
+                            "Provide a trusted SHA-256 sidecar file or environment variable",
+                            "Set BUNKER_MINERS_PATH or BUNKER_MINER_<MINER>_PATH if the binary is outside the managed directory",
+                        ]
+                        .as_slice(),
+                        started_at,
+                    )));
+                }
+            }
         };
 
         let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<MinerTelemetry>();

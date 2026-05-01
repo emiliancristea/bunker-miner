@@ -270,6 +270,7 @@ async fn start_command(
 
     let response = client.start_mining(request).await?.into_inner();
     print_command_response(&response);
+    ensure_command_succeeded(&response)?;
 
     Ok(())
 }
@@ -286,6 +287,7 @@ async fn stop_command(client: &mut BunkerMinerDaemonClient<Channel>, args: StopA
 
     let response = client.stop_mining(request).await?.into_inner();
     print_command_response(&response);
+    ensure_command_succeeded(&response)?;
 
     Ok(())
 }
@@ -589,6 +591,16 @@ fn print_command_response(response: &CommandResponse) {
 
     if let Some(timestamp) = format_timestamp(response.timestamp.as_ref()) {
         println!("Timestamp: {timestamp}");
+    }
+}
+
+fn ensure_command_succeeded(response: &CommandResponse) -> Result<()> {
+    match enum_value(response.status, command_response::Status::Unknown) {
+        command_response::Status::Success => Ok(()),
+        _ => bail!(
+            "daemon command returned {}",
+            command_status_label(response.status)
+        ),
     }
 }
 

@@ -77,6 +77,8 @@ Current status: the enforced Rust workspace has reached Level 1 for the promoted
 
 Current miner binary policy: daemon execution is fail-closed. A miner executable must be discovered from the managed binary directory, `BUNKER_MINERS_PATH`, `BUNKER_MINER_<MINER>_PATH`, or `PATH`, and it must have a trusted SHA-256 from a sidecar `.sha256` file, `BUNKER_MINER_<MINER>_SHA256`, or a future signed built-in manifest. `BUNKER_MINER_ALLOW_UNVERIFIED_MINERS=1` is a development-only escape hatch and is not acceptable for release builds.
 
+Current local service policy: daemon configuration can be bootstrapped non-interactively with `BUNKER_MINER_CONFIG_DIR` plus either `BUNKER_MINER_CONFIG_PASSWORD` or `BUNKER_MINER_CONFIG_PASSWORD_FILE`. Configuration templates may contain placeholder wallets, but mining operations must reject placeholder wallets and unavailable/untrusted miner binaries.
+
 ### Level 3: Product Beta
 
 - Two or more miner adapters are production-quality.

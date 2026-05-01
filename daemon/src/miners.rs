@@ -4,6 +4,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::env;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,7 +17,7 @@ use tokio::sync::{mpsc, RwLock};
 use tokio::time::{sleep, timeout};
 use tracing::{debug, error, info, warn};
 
-use crate::config::Config;
+use crate::config::{Config, CONFIG_DIR_ENV};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Telemetry {
@@ -467,10 +468,14 @@ pub struct MinerManager {
 
 impl MinerManager {
     pub fn new() -> Result<Self> {
-        let config_dir =
-            dirs::config_dir().ok_or_else(|| anyhow!("Could not determine config directory"))?;
+        let config_dir = match env::var_os(CONFIG_DIR_ENV) {
+            Some(path) => PathBuf::from(path),
+            None => dirs::config_dir()
+                .ok_or_else(|| anyhow!("Could not determine config directory"))?
+                .join("bunker-miner"),
+        };
 
-        let binaries_dir = config_dir.join("bunker-miner").join("binaries");
+        let binaries_dir = config_dir.join("binaries");
 
         // Create binaries directory
         fs::create_dir_all(&binaries_dir).context("Failed to create binaries directory")?;
