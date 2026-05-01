@@ -9,6 +9,9 @@ repository = "https://github.com/emiliancristea/bunker-miner"
 keywords = ["mining", "cryptocurrency", "gpu", "daemon"]
 categories = ["network-programming"]
 
+[features]
+proxy = []
+
 [dependencies]
 # Core async runtime
 tokio = { version = "1.0", features = ["full"] }

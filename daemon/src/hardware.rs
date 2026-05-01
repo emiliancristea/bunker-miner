@@ -1,10 +1,10 @@
 /*!
  * BUNKER MINER - Hardware Detection & Monitoring Module
- * 
+ *
  * This module provides comprehensive hardware detection and monitoring capabilities
  * for NVIDIA GPUs, AMD GPUs, and CPU resources. It serves as the foundation for
  * intelligent mining operations and profit optimization.
- * 
+ *
  * Key Features:
  * - Cross-platform GPU detection (NVIDIA via NVML, AMD via rocm-smi/lspci)
  * - CPU detection and capability assessment
@@ -14,14 +14,12 @@
  */
 
 use anyhow::{Context, Result};
-use nvml_wrapper::{Nvml, Device};
-use regex::Regex;
+use nvml_wrapper::{Device, Nvml};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::Command;
-use sysinfo::{System, SystemExt, CpuExt};
-use tracing::{debug, info, warn, error};
-use uuid::Uuid;
+use sysinfo::{CpuExt, System, SystemExt};
+use tracing::{debug, error, info, warn};
 
 /// Unified representation of a mining device (GPU or CPU)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +52,16 @@ pub enum DeviceType {
     AmdGpu,
     #[serde(rename = "cpu")]
     Cpu,
+}
+
+impl std::fmt::Display for DeviceType {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeviceType::NvidiaGpu => formatter.write_str("nvidia_gpu"),
+            DeviceType::AmdGpu => formatter.write_str("amd_gpu"),
+            DeviceType::Cpu => formatter.write_str("cpu"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,7 +100,7 @@ impl HardwareDetector {
     /// Create a new hardware detector instance
     pub fn new() -> Result<Self> {
         info!("Initializing hardware detector");
-        
+
         // Initialize NVML for NVIDIA GPU detection
         let nvml = match Nvml::init() {
             Ok(nvml) => {
@@ -100,7 +108,10 @@ impl HardwareDetector {
                 Some(nvml)
             }
             Err(e) => {
-                warn!("Failed to initialize NVML: {}. NVIDIA GPU detection disabled", e);
+                warn!(
+                    "Failed to initialize NVML: {}. NVIDIA GPU detection disabled",
+                    e
+                );
                 None
             }
         };
@@ -119,7 +130,7 @@ impl HardwareDetector {
     /// Detect all available mining devices
     pub fn detect_devices(&mut self) -> Result<Vec<MiningDevice>> {
         info!("Starting comprehensive hardware detection");
-        
+
         let mut devices = Vec::new();
 
         // Detect NVIDIA GPUs
@@ -157,17 +168,21 @@ impl HardwareDetector {
             }
         }
 
-        info!("Hardware detection completed. Found {} total devices", devices.len());
-        
+        info!(
+            "Hardware detection completed. Found {} total devices",
+            devices.len()
+        );
+
         // Cache the detected devices
         self.cached_devices = Some(devices.clone());
-        
+
         Ok(devices)
     }
 
     /// Detect NVIDIA GPUs using NVML
-    fn detect_nvidia_devices(&mut self, nvml: &Nvml) -> Result<Vec<MiningDevice>> {
-        let device_count = nvml.device_count()
+    fn detect_nvidia_devices(&self, nvml: &Nvml) -> Result<Vec<MiningDevice>> {
+        let device_count = nvml
+            .device_count()
             .context("Failed to get NVIDIA device count")?;
 
         debug!("NVML reports {} NVIDIA device(s)", device_count);
@@ -190,23 +205,23 @@ impl HardwareDetector {
     }
 
     /// Create a MiningDevice from NVIDIA GPU information
-    fn create_nvidia_device(&mut self, nvml: &Nvml, index: u32) -> Result<MiningDevice> {
-        let device = nvml.device_by_index(index)
+    fn create_nvidia_device(&self, nvml: &Nvml, index: u32) -> Result<MiningDevice> {
+        let device = nvml
+            .device_by_index(index)
             .context(format!("Failed to get NVIDIA device {}", index))?;
 
-        let name = device.name()
-            .context("Failed to get NVIDIA device name")?;
+        let name = device.name().context("Failed to get NVIDIA device name")?;
 
-        let memory_info = device.memory_info()
+        let memory_info = device
+            .memory_info()
             .context("Failed to get NVIDIA memory info")?;
 
-        let driver_version = nvml.sys_driver_version()
-            .ok();
+        let driver_version = nvml.sys_driver_version().ok();
 
         // Get PCI information
         let pci_info = match device.pci_info() {
             Ok(pci) => Some(PciInfo {
-                bus_id: format!("{:02x}:{:02x}.{}", pci.bus, pci.device, pci.function),
+                bus_id: pci.bus_id,
                 device_id: format!("{:04x}", pci.pci_device_id),
                 vendor_id: "10de".to_string(), // NVIDIA vendor ID
             }),
@@ -221,12 +236,13 @@ impl HardwareDetector {
 
         // Create device properties
         let mut properties = HashMap::new();
-        
+
         // Add compute capability if available
-        if let Ok(major) = device.cuda_compute_capability_major() {
-            if let Ok(minor) = device.cuda_compute_capability_minor() {
-                properties.insert("compute_capability".to_string(), format!("{}.{}", major, minor));
-            }
+        if let Ok(capability) = device.cuda_compute_capability() {
+            properties.insert(
+                "compute_capability".to_string(),
+                format!("{}.{}", capability.major, capability.minor),
+            );
         }
 
         // Add architecture if available
@@ -253,11 +269,13 @@ impl HardwareDetector {
     }
 
     /// Get current metrics for NVIDIA device
-    fn get_nvidia_metrics(&mut self, device: &Device) -> Result<DeviceMetrics> {
+    fn get_nvidia_metrics(&self, device: &Device) -> Result<DeviceMetrics> {
         let mut metrics = DeviceMetrics::default();
 
         // Temperature
-        if let Ok(temp) = device.temperature(nvml_wrapper::enum_wrappers::device::TemperatureSensor::Gpu) {
+        if let Ok(temp) =
+            device.temperature(nvml_wrapper::enum_wrappers::device::TemperatureSensor::Gpu)
+        {
             metrics.temperature_c = Some(temp as f32);
         }
 
@@ -278,11 +296,15 @@ impl HardwareDetector {
         }
 
         // Clock speeds
-        if let Ok(graphics_clock) = device.clock_info(nvml_wrapper::enum_wrappers::device::Clock::Graphics) {
+        if let Ok(graphics_clock) =
+            device.clock_info(nvml_wrapper::enum_wrappers::device::Clock::Graphics)
+        {
             metrics.core_clock_mhz = Some(graphics_clock);
         }
 
-        if let Ok(memory_clock) = device.clock_info(nvml_wrapper::enum_wrappers::device::Clock::Memory) {
+        if let Ok(memory_clock) =
+            device.clock_info(nvml_wrapper::enum_wrappers::device::Clock::Memory)
+        {
             metrics.memory_clock_mhz = Some(memory_clock);
         }
 
@@ -294,7 +316,9 @@ impl HardwareDetector {
         let mut metrics = DeviceMetrics::default();
 
         // Temperature
-        if let Ok(temp) = device.temperature(nvml_wrapper::enum_wrappers::device::TemperatureSensor::Gpu) {
+        if let Ok(temp) =
+            device.temperature(nvml_wrapper::enum_wrappers::device::TemperatureSensor::Gpu)
+        {
             metrics.temperature_c = Some(temp as f32);
         }
 
@@ -315,11 +339,15 @@ impl HardwareDetector {
         }
 
         // Clock speeds
-        if let Ok(graphics_clock) = device.clock_info(nvml_wrapper::enum_wrappers::device::Clock::Graphics) {
+        if let Ok(graphics_clock) =
+            device.clock_info(nvml_wrapper::enum_wrappers::device::Clock::Graphics)
+        {
             metrics.core_clock_mhz = Some(graphics_clock);
         }
 
-        if let Ok(memory_clock) = device.clock_info(nvml_wrapper::enum_wrappers::device::Clock::Memory) {
+        if let Ok(memory_clock) =
+            device.clock_info(nvml_wrapper::enum_wrappers::device::Clock::Memory)
+        {
             metrics.memory_clock_mhz = Some(memory_clock);
         }
 
@@ -331,13 +359,13 @@ impl HardwareDetector {
         vec![
             "ethash".to_string(),
             "etchash".to_string(),
-            "kheavyhash".to_string(),  // Kaspa
-            "autolykos2".to_string(),  // Ergo
-            "octopus".to_string(),     // Conflux
-            "kawpow".to_string(),      // Ravencoin
-            "beamv3".to_string(),      // Beam
-            "neoscrypt".to_string(),   // Feathercoin
-            "zhash".to_string(),       // ZelCash
+            "kheavyhash".to_string(), // Kaspa
+            "autolykos2".to_string(), // Ergo
+            "octopus".to_string(),    // Conflux
+            "kawpow".to_string(),     // Ravencoin
+            "beamv3".to_string(),     // Beam
+            "neoscrypt".to_string(),  // Feathercoin
+            "zhash".to_string(),      // ZelCash
         ]
     }
 
@@ -359,7 +387,7 @@ impl HardwareDetector {
     /// Detect AMD GPUs using rocm-smi
     fn detect_amd_with_rocm_smi(&mut self) -> Result<Vec<MiningDevice>> {
         let output = Command::new("rocm-smi")
-            .args(&["--showproductname", "--showmeminfo", "--json"])
+            .args(["--showproductname", "--showmeminfo", "--json"])
             .output();
 
         match output {
@@ -390,9 +418,7 @@ impl HardwareDetector {
     fn detect_amd_with_lspci(&mut self) -> Result<Vec<MiningDevice>> {
         #[cfg(target_os = "linux")]
         {
-            let output = Command::new("lspci")
-                .args(&["-nn", "-d", "1002:"])
-                .output();
+            let output = Command::new("lspci").args(&["-nn", "-d", "1002:"]).output();
 
             match output {
                 Ok(output) if output.status.success() => {
@@ -419,7 +445,9 @@ impl HardwareDetector {
     #[cfg(target_os = "linux")]
     fn parse_lspci_amd_output(&mut self, output: &str) -> Result<Vec<MiningDevice>> {
         let mut devices = Vec::new();
-        let re = Regex::new(r"([0-9a-f]{2}:[0-9a-f]{2}\.[0-9]) VGA compatible controller: (.+?) \[([0-9a-f]{4}):([0-9a-f]{4})\]")?;
+        let re = regex::Regex::new(
+            r"([0-9a-f]{2}:[0-9a-f]{2}\.[0-9]) VGA compatible controller: (.+?) \[([0-9a-f]{4}):([0-9a-f]{4})\]",
+        )?;
 
         for (index, line) in output.lines().enumerate() {
             if let Some(captures) = re.captures(line) {
@@ -450,34 +478,28 @@ impl HardwareDetector {
         Ok(devices)
     }
 
-    #[cfg(target_os = "windows")]
-    fn parse_lspci_amd_output(&mut self, _output: &str) -> Result<Vec<MiningDevice>> {
-        Ok(vec![])
-    }
-
     /// Get supported algorithms for AMD GPUs
+    #[cfg(target_os = "linux")]
     fn get_amd_supported_algorithms(&self) -> Vec<String> {
         vec![
             "ethash".to_string(),
             "etchash".to_string(),
-            "autolykos2".to_string(),  // Ergo
-            "kheavyhash".to_string(),  // Kaspa
-            "kawpow".to_string(),      // Ravencoin
-            "verthash".to_string(),    // Vertcoin
+            "autolykos2".to_string(), // Ergo
+            "kheavyhash".to_string(), // Kaspa
+            "kawpow".to_string(),     // Ravencoin
+            "verthash".to_string(),   // Vertcoin
         ]
     }
 
     /// Detect CPU information
     fn detect_cpu(&mut self) -> Result<MiningDevice> {
         self.system.refresh_cpu();
-        
+
         let cpus = self.system.cpus();
-        let cpu = cpus.first()
-            .context("No CPU information available")?;
+        let cpu = cpus.first().context("No CPU information available")?;
 
         let name = cpu.brand().to_string();
-        let core_count = self.system.physical_core_count()
-            .unwrap_or_else(|| cpus.len());
+        let core_count = self.system.physical_core_count().unwrap_or(cpus.len());
 
         let mut properties = HashMap::new();
         properties.insert("core_count".to_string(), core_count.to_string());
@@ -529,7 +551,8 @@ impl HardwareDetector {
                             if let Some(index_str) = device.id.strip_prefix("nvidia_gpu_") {
                                 if let Ok(index) = index_str.parse::<u32>() {
                                     if let Ok(nvml_device) = nvml.device_by_index(index) {
-                                        device.metrics = Self::get_nvidia_metrics_static(&nvml_device)?;
+                                        device.metrics =
+                                            Self::get_nvidia_metrics_static(&nvml_device)?;
                                     }
                                 }
                             }
@@ -622,7 +645,7 @@ mod tests {
 
         let serialized = serde_json::to_string(&device).unwrap();
         let deserialized: MiningDevice = serde_json::from_str(&serialized).unwrap();
-        
+
         assert_eq!(deserialized.id, device.id);
         assert_eq!(deserialized.name, device.name);
         assert_eq!(deserialized.device_type, device.device_type);
@@ -633,7 +656,7 @@ mod tests {
     fn test_lspci_parsing() {
         let mut detector = HardwareDetector::new().unwrap();
         let test_output = "01:00.0 VGA compatible controller: Advanced Micro Devices, Inc. [AMD/ATI] Navi 21 [Radeon RX 6800/6800 XT / 6900 XT] [1002:73bf]";
-        
+
         let devices = detector.parse_lspci_amd_output(test_output).unwrap();
         assert_eq!(devices.len(), 1);
         assert_eq!(devices[0].device_type, DeviceType::AmdGpu);

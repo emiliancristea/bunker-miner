@@ -1,10 +1,10 @@
 /*!
  * BUNKER MINER - Benchmarking Engine
- * 
+ *
  * This module implements a comprehensive benchmarking system that measures the
  * performance of different mining algorithms on detected hardware. The benchmarking
  * results form the foundation for intelligent profit switching and optimization.
- * 
+ *
  * Key Features:
  * - Algorithm-specific benchmarking for each device type
  * - Integration with third-party miners (lolMiner, XMRig, etc.)
@@ -14,19 +14,17 @@
  * - Results persistence and caching
  */
 
-use crate::hardware::{MiningDevice, DeviceType, HardwareDetector};
-use anyhow::{Context, Result, anyhow};
-use chrono::{DateTime, Utc, Duration};
+use crate::hardware::{DeviceType, HardwareDetector, MiningDevice};
+use anyhow::{anyhow, Context, Result};
+use chrono::{DateTime, Utc};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio, Child};
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
-use std::thread;
-use std::time::Duration as StdDuration;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 use which::which;
 
@@ -204,14 +202,20 @@ impl BenchmarkingEngine {
         info!("Initializing algorithm configurations");
 
         // Ethash configuration
-        self.algorithm_configs.insert("ethash".to_string(), AlgorithmConfig {
-            name: "ethash".to_string(),
-            display_name: "Ethash (Ethereum Classic)".to_string(),
-            supported_devices: vec![DeviceType::NvidiaGpu, DeviceType::AmdGpu],
-            miner_configs: vec![
-                MinerConfig {
+        self.algorithm_configs.insert(
+            "ethash".to_string(),
+            AlgorithmConfig {
+                name: "ethash".to_string(),
+                display_name: "Ethash (Ethereum Classic)".to_string(),
+                supported_devices: vec![DeviceType::NvidiaGpu, DeviceType::AmdGpu],
+                miner_configs: vec![MinerConfig {
                     name: "lolMiner".to_string(),
-                    executable: if cfg!(windows) { "lolMiner.exe" } else { "lolMiner" }.to_string(),
+                    executable: if cfg!(windows) {
+                        "lolMiner.exe"
+                    } else {
+                        "lolMiner"
+                    }
+                    .to_string(),
                     args_template: vec![
                         "--algo".to_string(),
                         "ETHASH".to_string(),
@@ -223,22 +227,28 @@ impl BenchmarkingEngine {
                     hashrate_regex: r"Total:\s+(\d+\.?\d*)\s*MH/s".to_string(),
                     hashrate_unit: "MH/s".to_string(),
                     properties: HashMap::new(),
-                },
-            ],
-            hashrate_range: Some((1.0, 150.0)), // 1-150 MH/s typical range
-            benchmark_duration: 60,
-            parameters: HashMap::new(),
-        });
+                }],
+                hashrate_range: Some((1.0, 150.0)), // 1-150 MH/s typical range
+                benchmark_duration: 60,
+                parameters: HashMap::new(),
+            },
+        );
 
         // Kaspa (kHeavyHash) configuration
-        self.algorithm_configs.insert("kheavyhash".to_string(), AlgorithmConfig {
-            name: "kheavyhash".to_string(),
-            display_name: "kHeavyHash (Kaspa)".to_string(),
-            supported_devices: vec![DeviceType::NvidiaGpu, DeviceType::AmdGpu],
-            miner_configs: vec![
-                MinerConfig {
+        self.algorithm_configs.insert(
+            "kheavyhash".to_string(),
+            AlgorithmConfig {
+                name: "kheavyhash".to_string(),
+                display_name: "kHeavyHash (Kaspa)".to_string(),
+                supported_devices: vec![DeviceType::NvidiaGpu, DeviceType::AmdGpu],
+                miner_configs: vec![MinerConfig {
                     name: "lolMiner".to_string(),
-                    executable: if cfg!(windows) { "lolMiner.exe" } else { "lolMiner" }.to_string(),
+                    executable: if cfg!(windows) {
+                        "lolMiner.exe"
+                    } else {
+                        "lolMiner"
+                    }
+                    .to_string(),
                     args_template: vec![
                         "--algo".to_string(),
                         "KASPA".to_string(),
@@ -250,20 +260,21 @@ impl BenchmarkingEngine {
                     hashrate_regex: r"Total:\s+(\d+\.?\d*)\s*GH/s".to_string(),
                     hashrate_unit: "GH/s".to_string(),
                     properties: HashMap::new(),
-                },
-            ],
-            hashrate_range: Some((0.1, 5.0)), // 0.1-5.0 GH/s typical range
-            benchmark_duration: 60,
-            parameters: HashMap::new(),
-        });
+                }],
+                hashrate_range: Some((0.1, 5.0)), // 0.1-5.0 GH/s typical range
+                benchmark_duration: 60,
+                parameters: HashMap::new(),
+            },
+        );
 
         // RandomX (CPU) configuration
-        self.algorithm_configs.insert("randomx".to_string(), AlgorithmConfig {
-            name: "randomx".to_string(),
-            display_name: "RandomX (Monero)".to_string(),
-            supported_devices: vec![DeviceType::Cpu],
-            miner_configs: vec![
-                MinerConfig {
+        self.algorithm_configs.insert(
+            "randomx".to_string(),
+            AlgorithmConfig {
+                name: "randomx".to_string(),
+                display_name: "RandomX (Monero)".to_string(),
+                supported_devices: vec![DeviceType::Cpu],
+                miner_configs: vec![MinerConfig {
                     name: "XMRig".to_string(),
                     executable: if cfg!(windows) { "xmrig.exe" } else { "xmrig" }.to_string(),
                     args_template: vec![
@@ -275,14 +286,17 @@ impl BenchmarkingEngine {
                     hashrate_regex: r"speed.*?(\d+\.?\d*)\s*H/s".to_string(),
                     hashrate_unit: "H/s".to_string(),
                     properties: HashMap::new(),
-                },
-            ],
-            hashrate_range: Some((100.0, 50000.0)), // 100-50k H/s typical CPU range
-            benchmark_duration: 30,
-            parameters: HashMap::new(),
-        });
+                }],
+                hashrate_range: Some((100.0, 50000.0)), // 100-50k H/s typical CPU range
+                benchmark_duration: 30,
+                parameters: HashMap::new(),
+            },
+        );
 
-        info!("Initialized {} algorithm configurations", self.algorithm_configs.len());
+        info!(
+            "Initialized {} algorithm configurations",
+            self.algorithm_configs.len()
+        );
         Ok(())
     }
 
@@ -298,12 +312,18 @@ impl BenchmarkingEngine {
         let mut reports = Vec::new();
 
         for device in devices {
-            info!("Benchmarking device: {} ({})", device.name, device.device_type);
-            
+            info!(
+                "Benchmarking device: {} ({:?})",
+                device.name, device.device_type
+            );
+
             match self.benchmark_device(&device).await {
                 Ok(report) => {
-                    info!("Successfully benchmarked {}: {} results", 
-                          device.name, report.results.len());
+                    info!(
+                        "Successfully benchmarked {}: {} results",
+                        device.name,
+                        report.results.len()
+                    );
                     reports.push(report);
                 }
                 Err(e) => {
@@ -327,36 +347,49 @@ impl BenchmarkingEngine {
     }
 
     /// Benchmark a single device with all supported algorithms
-    pub async fn benchmark_device(&mut self, device: &MiningDevice) -> Result<DeviceBenchmarkReport> {
+    pub async fn benchmark_device(
+        &mut self,
+        device: &MiningDevice,
+    ) -> Result<DeviceBenchmarkReport> {
         info!("Starting benchmark for device: {}", device.name);
-        
-        let start_time = Utc::now();
+
         let mut results = Vec::new();
         let mut total_duration = 0;
 
         // Get algorithms supported by this device type
-        let supported_algorithms: Vec<_> = self.algorithm_configs
+        let supported_algorithms: Vec<AlgorithmConfig> = self
+            .algorithm_configs
             .values()
             .filter(|config| config.supported_devices.contains(&device.device_type))
+            .cloned()
             .collect();
 
-        info!("Found {} supported algorithms for {}", 
-              supported_algorithms.len(), device.name);
+        info!(
+            "Found {} supported algorithms for {}",
+            supported_algorithms.len(),
+            device.name
+        );
 
         for algorithm_config in supported_algorithms {
-            info!("Benchmarking {} on {}", algorithm_config.display_name, device.name);
-            
-            match self.benchmark_algorithm(device, algorithm_config).await {
+            info!(
+                "Benchmarking {} on {}",
+                algorithm_config.display_name, device.name
+            );
+
+            match self.benchmark_algorithm(device, &algorithm_config).await {
                 Ok(mut algorithm_results) => {
-                    total_duration += algorithm_results.iter()
+                    total_duration += algorithm_results
+                        .iter()
                         .map(|r| r.duration_seconds)
                         .sum::<u64>();
                     results.append(&mut algorithm_results);
                 }
                 Err(e) => {
-                    warn!("Failed to benchmark {} on {}: {}", 
-                          algorithm_config.name, device.name, e);
-                    
+                    warn!(
+                        "Failed to benchmark {} on {}: {}",
+                        algorithm_config.name, device.name, e
+                    );
+
                     // Create a failed result
                     results.push(BenchmarkResult {
                         id: Uuid::new_v4().to_string(),
@@ -396,8 +429,10 @@ impl BenchmarkingEngine {
         let mut cache = self.results_cache.write().await;
         cache.insert(device.id.clone(), report.clone());
 
-        info!("Completed benchmark for device: {} (duration: {}s)", 
-              device.name, total_duration);
+        info!(
+            "Completed benchmark for device: {} (duration: {}s)",
+            device.name, total_duration
+        );
 
         Ok(report)
     }
@@ -411,16 +446,23 @@ impl BenchmarkingEngine {
         let mut results = Vec::new();
 
         for miner_config in &algorithm_config.miner_configs {
-            info!("Running {} benchmark with {}", 
-                  algorithm_config.name, miner_config.name);
+            info!(
+                "Running {} benchmark with {}",
+                algorithm_config.name, miner_config.name
+            );
 
-            match self.run_single_benchmark(device, algorithm_config, miner_config).await {
+            match self
+                .run_single_benchmark(device, algorithm_config, miner_config)
+                .await
+            {
                 Ok(result) => {
                     results.push(result);
                 }
                 Err(e) => {
-                    warn!("Failed to run {} benchmark with {}: {}", 
-                          algorithm_config.name, miner_config.name, e);
+                    warn!(
+                        "Failed to run {} benchmark with {}: {}",
+                        algorithm_config.name, miner_config.name, e
+                    );
                 }
             }
         }
@@ -438,8 +480,10 @@ impl BenchmarkingEngine {
         let benchmark_id = Uuid::new_v4().to_string();
         let start_time = Utc::now();
 
-        info!("Starting benchmark {}: {} on {} with {}", 
-              benchmark_id, algorithm_config.name, device.name, miner_config.name);
+        info!(
+            "Starting benchmark {}: {} on {} with {}",
+            benchmark_id, algorithm_config.name, device.name, miner_config.name
+        );
 
         // Find miner executable
         let miner_path = self.find_miner_executable(&miner_config.executable)?;
@@ -450,7 +494,7 @@ impl BenchmarkingEngine {
         debug!("Miner arguments: {:?}", args);
 
         // Start the miner process
-        let mut child = Command::new(&miner_path)
+        let child = Command::new(&miner_path)
             .args(&args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -464,11 +508,9 @@ impl BenchmarkingEngine {
         }
 
         // Monitor the benchmark
-        let monitoring_result = self.monitor_benchmark(
-            &benchmark_id, 
-            device, 
-            algorithm_config.benchmark_duration
-        ).await;
+        let monitoring_result = self
+            .monitor_benchmark(&benchmark_id, device, algorithm_config.benchmark_duration)
+            .await;
 
         // Retrieve and terminate the process
         let child = {
@@ -483,12 +525,13 @@ impl BenchmarkingEngine {
             }
 
             // Collect output
-            let output = child.wait_with_output()
+            let output = child
+                .wait_with_output()
                 .context("Failed to collect miner output")?;
 
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            
+
             debug!("Miner stdout: {}", stdout);
             if !stderr.is_empty() {
                 debug!("Miner stderr: {}", stderr);
@@ -522,8 +565,10 @@ impl BenchmarkingEngine {
                 metrics: HashMap::new(),
             };
 
-            info!("Benchmark completed: {:.2} {} ({:.2} H/s)", 
-                  result.hashrate, result.hashrate_unit, result.hashrate_hs);
+            info!(
+                "Benchmark completed: {:.2} {} ({:.2} H/s)",
+                result.hashrate, result.hashrate_unit, result.hashrate_hs
+            );
 
             Ok(result)
         } else {
@@ -542,13 +587,12 @@ impl BenchmarkingEngine {
         // Check if it's in the system PATH
         match which(executable_name) {
             Ok(path) => Ok(path),
-            Err(_) => {
-                Err(anyhow!(
-                    "Miner executable '{}' not found in {} or system PATH. \
+            Err(_) => Err(anyhow!(
+                "Miner executable '{}' not found in {} or system PATH. \
                      Please install the miner in the miners directory.",
-                    executable_name, self.miners_directory.display()
-                ))
-            }
+                executable_name,
+                self.miners_directory.display()
+            )),
         }
     }
 
@@ -556,10 +600,10 @@ impl BenchmarkingEngine {
     fn prepare_miner_arguments(
         &self,
         device: &MiningDevice,
-        algorithm_config: &AlgorithmConfig,
+        _algorithm_config: &AlgorithmConfig,
         miner_config: &MinerConfig,
     ) -> Result<Vec<String>> {
-        let mut args = miner_config.args_template.clone();
+        let args = miner_config.args_template.clone();
 
         // Device-specific argument substitution would go here
         // For now, use the template as-is
@@ -567,7 +611,7 @@ impl BenchmarkingEngine {
         // Add device-specific GPU selection if needed
         if device.device_type == DeviceType::NvidiaGpu || device.device_type == DeviceType::AmdGpu {
             // Extract GPU index from device ID if possible
-            if let Some(index_str) = device.id.split('_').last() {
+            if let Some(index_str) = device.id.rsplit('_').next() {
                 if let Ok(_index) = index_str.parse::<u32>() {
                     // GPU selection args would be added here based on miner type
                     debug!("GPU index for {}: {}", device.name, index_str);
@@ -585,11 +629,13 @@ impl BenchmarkingEngine {
         device: &MiningDevice,
         duration_seconds: u64,
     ) -> Result<(Option<f64>, Option<f32>)> {
-        debug!("Monitoring benchmark {} for {}s", benchmark_id, duration_seconds);
+        debug!(
+            "Monitoring benchmark {} for {}s",
+            benchmark_id, duration_seconds
+        );
 
         let mut power_readings = Vec::new();
         let mut temperature_readings = Vec::new();
-        let monitor_interval = StdDuration::from_secs(5); // Sample every 5 seconds
         let total_samples = duration_seconds / 5;
 
         for _ in 0..total_samples {
@@ -625,22 +671,30 @@ impl BenchmarkingEngine {
             None
         };
 
-        debug!("Monitoring completed. Avg power: {:?}W, Avg temp: {:?}°C", 
-               avg_power, avg_temperature);
+        debug!(
+            "Monitoring completed. Avg power: {:?}W, Avg temp: {:?}°C",
+            avg_power, avg_temperature
+        );
 
         Ok((avg_power, avg_temperature))
     }
 
     /// Extract hashrate from miner output using regex
-    fn extract_hashrate_from_output(&self, output: &str, miner_config: &MinerConfig) -> Result<f64> {
-        let regex = Regex::new(&miner_config.hashrate_regex)
-            .context("Invalid hashrate regex pattern")?;
+    fn extract_hashrate_from_output(
+        &self,
+        output: &str,
+        miner_config: &MinerConfig,
+    ) -> Result<f64> {
+        let regex =
+            Regex::new(&miner_config.hashrate_regex).context("Invalid hashrate regex pattern")?;
 
         // Look for the last occurrence of hashrate in the output
         let mut hashrate = 0.0;
         for capture in regex.captures_iter(output) {
             if let Some(hashrate_match) = capture.get(1) {
-                hashrate = hashrate_match.as_str().parse::<f64>()
+                hashrate = hashrate_match
+                    .as_str()
+                    .parse::<f64>()
                     .context("Failed to parse hashrate value")?;
             }
         }
@@ -668,7 +722,8 @@ impl BenchmarkingEngine {
 
     /// Analyze benchmark results to find best and most efficient algorithms
     fn analyze_results(&self, results: &[BenchmarkResult]) -> (Option<String>, Option<String>) {
-        let successful_results: Vec<_> = results.iter()
+        let successful_results: Vec<_> = results
+            .iter()
             .filter(|r| r.success && r.hashrate_hs > 0.0)
             .collect();
 
@@ -677,12 +732,14 @@ impl BenchmarkingEngine {
         }
 
         // Best algorithm by raw hashrate
-        let best_by_hashrate = successful_results.iter()
+        let best_by_hashrate = successful_results
+            .iter()
             .max_by(|a, b| a.hashrate_hs.partial_cmp(&b.hashrate_hs).unwrap())
             .map(|r| r.algorithm.clone());
 
         // Most efficient algorithm by hashrate per watt
-        let best_by_efficiency = successful_results.iter()
+        let best_by_efficiency = successful_results
+            .iter()
             .filter(|r| r.power_watts.is_some() && r.power_watts.unwrap() > 0.0)
             .max_by(|a, b| {
                 let eff_a = a.hashrate_hs / a.power_watts.unwrap();
@@ -709,7 +766,7 @@ impl BenchmarkingEngine {
     /// Cancel all active benchmarks
     pub async fn cancel_all_benchmarks(&mut self) -> Result<()> {
         info!("Cancelling all active benchmarks");
-        
+
         let mut processes = self.active_processes.write().await;
         for (benchmark_id, mut child) in processes.drain() {
             info!("Terminating benchmark: {}", benchmark_id);
@@ -728,12 +785,15 @@ mod tests {
     #[test]
     fn test_hashrate_normalization() {
         let engine = create_test_engine();
-        
+
         assert_eq!(engine.normalize_hashrate(1.0, "H/s").unwrap(), 1.0);
         assert_eq!(engine.normalize_hashrate(1.0, "kH/s").unwrap(), 1_000.0);
         assert_eq!(engine.normalize_hashrate(1.0, "MH/s").unwrap(), 1_000_000.0);
-        assert_eq!(engine.normalize_hashrate(1.0, "GH/s").unwrap(), 1_000_000_000.0);
-        
+        assert_eq!(
+            engine.normalize_hashrate(1.0, "GH/s").unwrap(),
+            1_000_000_000.0
+        );
+
         assert!(engine.normalize_hashrate(1.0, "invalid").is_err());
     }
 
@@ -750,16 +810,18 @@ mod tests {
         };
 
         let output = "Some output\nTotal: 45.67 MH/s\nMore output";
-        let hashrate = engine.extract_hashrate_from_output(output, &miner_config).unwrap();
+        let hashrate = engine
+            .extract_hashrate_from_output(output, &miner_config)
+            .unwrap();
         assert_eq!(hashrate, 45.67);
     }
 
     fn create_test_engine() -> BenchmarkingEngine {
         // Create a mock hardware detector for testing
         let hardware_detector = Arc::new(RwLock::new(
-            crate::hardware::HardwareDetector::new().unwrap()
+            crate::hardware::HardwareDetector::new().unwrap(),
         ));
-        
+
         BenchmarkingEngine::new(hardware_detector).unwrap()
     }
 }

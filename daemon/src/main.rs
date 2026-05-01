@@ -1,33 +1,20 @@
-mod hardware;
-mod benchmarking;
-mod profiles;
-mod config;
-mod miners;
-mod grpc;
-mod profit_engine;
-mod web_dashboard;
-mod overclocking;
-mod power_tuning;
-mod fleet_agent;
-mod telemetry;
-
+use bunker_miner_daemon::benchmarking::{self, BenchmarkingEngine};
+use bunker_miner_daemon::config::ConfigManager;
+use bunker_miner_daemon::fleet_agent::FleetAgent;
+use bunker_miner_daemon::grpc::{DaemonState, GrpcServer};
+use bunker_miner_daemon::hardware::HardwareDetector;
+use bunker_miner_daemon::miners::{MinerManager, ProcessSupervisor, Telemetry};
+use bunker_miner_daemon::profiles::ProfileManager;
+use bunker_miner_daemon::profit_engine::{AlgorithmProfile, ProfitEngineService};
+use bunker_miner_daemon::telemetry::TelemetryCollector;
+use bunker_miner_daemon::web_dashboard::WebDashboardServer;
 use clap::{Arg, Command};
 use std::process;
 use std::sync::Arc;
+use sysinfo::SystemExt;
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::{timeout, Duration};
-use tracing::{info, warn, error};
-
-use hardware::HardwareDetector;
-use benchmarking::BenchmarkingEngine;
-use profiles::ProfileManager;
-use config::ConfigManager;
-use miners::{MinerManager, ProcessSupervisor, Telemetry};
-use grpc::{DaemonState, GrpcServer};
-use profit_engine::{ProfitEngineService, AlgorithmProfile};
-use web_dashboard::WebDashboardServer;
-use fleet_agent::FleetAgent;
-use telemetry::TelemetryCollector;
+use tracing::{error, info, warn};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -42,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Arg::new("health-check")
                 .long("health-check")
                 .help("Perform health check and exit")
-                .action(clap::ArgAction::SetTrue)
+                .action(clap::ArgAction::SetTrue),
         )
         .subcommand(
             Command::new("benchmark")
@@ -52,31 +39,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .long("device")
                         .short('d')
                         .help("Benchmark specific device by ID")
-                        .value_name("DEVICE_ID")
+                        .value_name("DEVICE_ID"),
                 )
                 .arg(
                     Arg::new("algorithm")
                         .long("algorithm")
                         .short('a')
                         .help("Benchmark specific algorithm")
-                        .value_name("ALGORITHM")
+                        .value_name("ALGORITHM"),
                 )
                 .arg(
                     Arg::new("duration")
                         .long("duration")
                         .help("Benchmark duration in seconds")
                         .value_name("SECONDS")
-                        .default_value("60")
-                )
+                        .default_value("60"),
+                ),
         )
-        .subcommand(
-            Command::new("list-devices")
-                .about("List all detected mining devices")
-        )
-        .subcommand(
-            Command::new("show-profiles")
-                .about("Show saved device profiles")
-        )
+        .subcommand(Command::new("list-devices").about("List all detected mining devices"))
+        .subcommand(Command::new("show-profiles").about("Show saved device profiles"))
         .subcommand(
             Command::new("start")
                 .about("Start mining with current configuration")
@@ -84,21 +65,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Arg::new("auto")
                         .long("auto")
                         .help("Enable automatic profit switching")
-                        .action(clap::ArgAction::SetTrue)
-                )
+                        .action(clap::ArgAction::SetTrue),
+                ),
         )
-        .subcommand(
-            Command::new("stop")
-                .about("Stop all mining processes")
-        )
-        .subcommand(
-            Command::new("status")
-                .about("Show current mining status")
-        )
-        .subcommand(
-            Command::new("serve")
-                .about("Start the gRPC API server")
-        )
+        .subcommand(Command::new("stop").about("Stop all mining processes"))
+        .subcommand(Command::new("status").about("Show current mining status"))
+        .subcommand(Command::new("serve").about("Start the gRPC API server"))
         .get_matches();
 
     // Handle health check
@@ -148,87 +120,115 @@ async fn perform_health_check() {
     println!("================================");
     println!("Status: OK");
     println!("Version: 0.1.0");
-    
+
     // Basic system checks
     let mut system = sysinfo::System::new_all();
     system.refresh_all();
-    
-    println!("System Memory: {} GB", system.total_memory() / 1024 / 1024 / 1024);
-    println!("Available Memory: {} GB", system.available_memory() / 1024 / 1024 / 1024);
-    
+
+    println!(
+        "System Memory: {} GB",
+        system.total_memory() / 1024 / 1024 / 1024
+    );
+    println!(
+        "Available Memory: {} GB",
+        system.available_memory() / 1024 / 1024 / 1024
+    );
+
     // Test hardware detection
     println!("\nHardware Detection Test:");
     match HardwareDetector::new() {
-        Ok(mut detector) => {
-            match detector.detect_devices() {
-                Ok(devices) => {
-                    println!("✓ Hardware detection working");
-                    println!("  Detected {} device(s)", devices.len());
-                    
-                    for device in devices {
-                        println!("  - {} ({})", device.name, format!("{:?}", device.device_type));
-                    }
-                }
-                Err(e) => {
-                    println!("⚠ Hardware detection error: {}", e);
+        Ok(mut detector) => match detector.detect_devices() {
+            Ok(devices) => {
+                println!("✓ Hardware detection working");
+                println!("  Detected {} device(s)", devices.len());
+
+                for device in devices {
+                    println!("  - {} ({:?})", device.name, device.device_type);
                 }
             }
-        }
+            Err(e) => {
+                println!("⚠ Hardware detection error: {}", e);
+            }
+        },
         Err(e) => {
             println!("⚠ Failed to initialize hardware detector: {}", e);
         }
     }
-    
+
     // Test permissions
     println!("\nPermission Check:");
     if let Ok(detector) = HardwareDetector::new() {
         if let Ok(permissions) = detector.check_permissions() {
-            println!("  NVML access: {}", if permissions.nvml_access { "✓" } else { "✗" });
-            println!("  ROCm access: {}", if permissions.rocm_smi_access { "✓" } else { "✗" });
-            println!("  System access: {}", if permissions.system_access { "✓" } else { "✗" });
+            println!(
+                "  NVML access: {}",
+                if permissions.nvml_access {
+                    "✓"
+                } else {
+                    "✗"
+                }
+            );
+            println!(
+                "  ROCm access: {}",
+                if permissions.rocm_smi_access {
+                    "✓"
+                } else {
+                    "✗"
+                }
+            );
+            println!(
+                "  System access: {}",
+                if permissions.system_access {
+                    "✓"
+                } else {
+                    "✗"
+                }
+            );
         }
     }
 }
 
-async fn run_benchmark_command(matches: &clap::ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_benchmark_command(
+    _matches: &clap::ArgMatches,
+) -> Result<(), Box<dyn std::error::Error>> {
     println!("BUNKER MINER Daemon - Hardware Benchmark");
     println!("=========================================");
-    
+
     info!("Initializing hardware detection...");
-    let mut hardware_detector = HardwareDetector::new()?;
+    let hardware_detector = HardwareDetector::new()?;
     let hardware_detector = Arc::new(RwLock::new(hardware_detector));
-    
+
     info!("Initializing benchmarking engine...");
     let mut benchmarking_engine = BenchmarkingEngine::new(hardware_detector.clone())?;
-    
+
     info!("Initializing profile manager...");
     let mut profile_manager = ProfileManager::new()?;
-    
+
     println!("\n🔍 Starting comprehensive hardware benchmark...");
     println!("This process will take several minutes depending on your hardware.\n");
-    
+
     // Run benchmarks for all devices
     let reports = benchmarking_engine.benchmark_all_devices().await?;
-    
+
     println!("\n📊 Benchmark Results Summary:");
     println!("============================");
-    
+
     let mut total_algorithms = 0;
     let mut successful_benchmarks = 0;
-    
+
     for report in &reports {
-        println!("\n🔧 Device: {} ({})", report.device.name, format!("{:?}", report.device.device_type));
+        println!(
+            "\n🔧 Device: {} ({})",
+            report.device.name, report.device.device_type
+        );
         println!("   Status: {:?}", report.status);
         println!("   Duration: {}s", report.total_duration_seconds);
-        
+
         if report.status == benchmarking::BenchmarkStatus::Completed {
-            let successful_results: Vec<_> = report.results.iter()
-                .filter(|r| r.success)
-                .collect();
-            
+            let successful_results: Vec<_> = report.results.iter().filter(|r| r.success).collect();
+
             successful_benchmarks += successful_results.len();
             total_algorithms += report.results.len();
-            
+
             if !successful_results.is_empty() {
                 println!("   Results:");
                 for result in successful_results {
@@ -237,57 +237,65 @@ async fn run_benchmark_command(matches: &clap::ArgMatches) -> Result<(), Box<dyn
                     } else {
                         String::new()
                     };
-                    
-                    println!("     {} -> {:.2} {} ({:.0} H/s){}",
-                             result.algorithm,
-                             result.hashrate,
-                             result.hashrate_unit,
-                             result.hashrate_hs,
-                             efficiency_str);
+
+                    println!(
+                        "     {} -> {:.2} {} ({:.0} H/s){}",
+                        result.algorithm,
+                        result.hashrate,
+                        result.hashrate_unit,
+                        result.hashrate_hs,
+                        efficiency_str
+                    );
                 }
-                
+
                 if let Some(best) = &report.best_algorithm {
                     println!("   🏆 Best Algorithm: {}", best);
                 }
-                
+
                 if let Some(efficient) = &report.most_efficient_algorithm {
                     println!("   ⚡ Most Efficient: {}", efficient);
                 }
             }
         }
-        
+
         // Create and save profile
         println!("   📝 Creating device profile...");
         let profile = profile_manager.create_profile_from_benchmark(report)?;
         profile_manager.save_profile(profile)?;
         println!("   ✓ Profile saved");
     }
-    
+
     println!("\n✅ Benchmark Complete!");
     println!("   Total devices: {}", reports.len());
-    println!("   Successful benchmarks: {}/{}", successful_benchmarks, total_algorithms);
+    println!(
+        "   Successful benchmarks: {}/{}",
+        successful_benchmarks, total_algorithms
+    );
     println!("   Profiles saved: {}", reports.len());
-    
+
     // Show profiles location
     let config_dir = dirs::config_dir()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
         .join("bunker-miner");
-    println!("   Profiles location: {}/profiles.json", config_dir.display());
-    
+    println!(
+        "   Profiles location: {}/profiles.json",
+        config_dir.display()
+    );
+
     println!("\n💡 Use 'show-profiles' command to view saved profiles");
     println!("💡 Profiles will be used for intelligent profit switching");
-    
+
     Ok(())
 }
 
 async fn list_devices_command() -> Result<(), Box<dyn std::error::Error>> {
     println!("BUNKER MINER Daemon - Device Detection");
     println!("=====================================");
-    
+
     info!("Detecting hardware devices...");
     let mut detector = HardwareDetector::new()?;
     let devices = detector.detect_devices()?;
-    
+
     if devices.is_empty() {
         println!("⚠ No mining devices detected");
         println!("Make sure you have:");
@@ -295,28 +303,34 @@ async fn list_devices_command() -> Result<(), Box<dyn std::error::Error>> {
         println!("  - Proper permissions for hardware access");
         return Ok(());
     }
-    
+
     println!("\n🔧 Detected Devices ({}):", devices.len());
     println!("===================");
-    
+
     for (i, device) in devices.iter().enumerate() {
         println!("\n{}. {} (ID: {})", i + 1, device.name, device.id);
         println!("   Type: {:?}", device.device_type);
-        
+
         if device.memory_mb > 0 {
             println!("   Memory: {} GB", device.memory_mb / 1024);
         }
-        
+
         if let Some(ref driver) = device.driver_version {
             println!("   Driver: {}", driver);
         }
-        
+
         if let Some(ref pci) = device.pci_info {
-            println!("   PCI: {} ({}:{})", pci.bus_id, pci.vendor_id, pci.device_id);
+            println!(
+                "   PCI: {} ({}:{})",
+                pci.bus_id, pci.vendor_id, pci.device_id
+            );
         }
-        
-        println!("   Supported Algorithms: {}", device.supported_algorithms.join(", "));
-        
+
+        println!(
+            "   Supported Algorithms: {}",
+            device.supported_algorithms.join(", ")
+        );
+
         // Show current metrics
         let metrics = &device.metrics;
         if let Some(temp) = metrics.temperature_c {
@@ -329,50 +343,69 @@ async fn list_devices_command() -> Result<(), Box<dyn std::error::Error>> {
             println!("   Utilization: {:.1}%", util);
         }
     }
-    
+
     println!("\n💡 Use 'benchmark' command to test performance");
-    
+
     Ok(())
 }
 
 async fn show_profiles_command() -> Result<(), Box<dyn std::error::Error>> {
     println!("BUNKER MINER Daemon - Device Profiles");
     println!("====================================");
-    
+
     let mut profile_manager = ProfileManager::new()?;
     let profiles = profile_manager.get_all_profiles()?;
-    
+
     if profiles.is_empty() {
         println!("📝 No device profiles found");
         println!("Run 'benchmark' command to create profiles");
         return Ok(());
     }
-    
+
     println!("\n📊 Saved Profiles ({}):", profiles.len());
     println!("================");
-    
+
     for (i, profile) in profiles.iter().enumerate() {
-        println!("\n{}. {} (ID: {})", i + 1, profile.device.name, profile.device.id);
-        println!("   Created: {}", profile.created_at.format("%Y-%m-%d %H:%M:%S UTC"));
-        println!("   Updated: {}", profile.updated_at.format("%Y-%m-%d %H:%M:%S UTC"));
+        println!(
+            "\n{}. {} (ID: {})",
+            i + 1,
+            profile.device.name,
+            profile.device.id
+        );
+        println!(
+            "   Created: {}",
+            profile.created_at.format("%Y-%m-%d %H:%M:%S UTC")
+        );
+        println!(
+            "   Updated: {}",
+            profile.updated_at.format("%Y-%m-%d %H:%M:%S UTC")
+        );
         println!("   Algorithms: {}", profile.algorithms.len());
-        
+
         // Show best performing algorithms
         let mut algorithm_performances: Vec<_> = profile.algorithms.values().collect();
-        algorithm_performances.sort_by(|a, b| b.average_metrics.avg_hashrate_hs.partial_cmp(&a.average_metrics.avg_hashrate_hs).unwrap());
-        
+        algorithm_performances.sort_by(|a, b| {
+            b.average_metrics
+                .avg_hashrate_hs
+                .partial_cmp(&a.average_metrics.avg_hashrate_hs)
+                .unwrap()
+        });
+
         if let Some(best) = algorithm_performances.first() {
-            println!("   🏆 Best: {} -> {:.0} H/s", 
-                     best.algorithm, 
-                     best.average_metrics.avg_hashrate_hs);
-            
+            println!(
+                "   🏆 Best: {} -> {:.0} H/s",
+                best.algorithm, best.average_metrics.avg_hashrate_hs
+            );
+
             if let Some(power) = best.average_metrics.avg_power_watts {
-                println!("        Power: {:.1}W, Efficiency: {:.1} H/W", 
-                         power, 
-                         best.average_metrics.avg_hashrate_hs / power);
+                println!(
+                    "        Power: {:.1}W, Efficiency: {:.1} H/W",
+                    power,
+                    best.average_metrics.avg_hashrate_hs / power
+                );
             }
         }
-        
+
         // Show all algorithms briefly
         println!("   Algorithms:");
         for (algo_name, algo_profile) in &profile.algorithms {
@@ -381,25 +414,30 @@ async fn show_profiles_command() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 String::new()
             };
-            
-            println!("     {} -> {:.0} H/s{}", 
-                     algo_name, 
-                     algo_profile.average_metrics.avg_hashrate_hs,
-                     power_str);
+
+            println!(
+                "     {} -> {:.0} H/s{}",
+                algo_name, algo_profile.average_metrics.avg_hashrate_hs, power_str
+            );
         }
     }
-    
+
     let config_dir = dirs::config_dir()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
         .join("bunker-miner");
-    println!("\n📁 Profiles stored in: {}/profiles.json", config_dir.display());
-    
+    println!(
+        "\n📁 Profiles stored in: {}/profiles.json",
+        config_dir.display()
+    );
+
     Ok(())
 }
 
-async fn start_mining_command(matches: &clap::ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
+async fn start_mining_command(
+    matches: &clap::ArgMatches,
+) -> Result<(), Box<dyn std::error::Error>> {
     let auto_mode = matches.get_flag("auto");
-    
+
     if auto_mode {
         println!("BUNKER MINER Daemon - Start Auto Mining (Profit Switching)");
         println!("==========================================================");
@@ -407,91 +445,129 @@ async fn start_mining_command(matches: &clap::ArgMatches) -> Result<(), Box<dyn 
         println!("BUNKER MINER Daemon - Start Mining");
         println!("==================================");
     }
-    
+
     info!("Initializing mining operation...");
-    
+
     // Initialize configuration manager
     let mut config_manager = ConfigManager::new()?;
     let config = config_manager.load_config().await?;
-    
+
     info!("✓ Configuration loaded successfully");
-    
+
     // Check if profit switching is enabled when using auto mode
     if auto_mode {
         if !config.profit_switching.enable {
-            return Err("Profit switching is disabled in configuration. Enable it or remove --auto flag.".into());
+            return Err(
+                "Profit switching is disabled in configuration. Enable it or remove --auto flag."
+                    .into(),
+            );
         }
         info!("✓ Profit switching enabled");
     }
-    
+
     // Initialize hardware detector
     let mut hardware_detector = HardwareDetector::new()?;
     let devices = hardware_detector.detect_devices()?;
-    
+
     if devices.is_empty() {
-        return Err("No mining devices detected. Please ensure GPU drivers are installed and accessible.".into());
+        return Err(
+            "No mining devices detected. Please ensure GPU drivers are installed and accessible."
+                .into(),
+        );
     }
-    
+
     info!("✓ Detected {} mining device(s)", devices.len());
-    
+
     // Initialize miner manager
     let miner_manager = MinerManager::new()?;
-    
+
     // Select appropriate miner for configured coin
-    let adapter = miner_manager.get_adapter_for_coin(&config.mining.active_coin)
-        .ok_or_else(|| format!("No miner adapter available for coin: {}", config.mining.active_coin))?;
-    
-    info!("✓ Selected {} miner for {}", adapter.get_name(), config.mining.active_coin);
-    
+    let adapter = miner_manager
+        .get_adapter_for_coin(&config.mining.active_coin)
+        .ok_or_else(|| {
+            format!(
+                "No miner adapter available for coin: {}",
+                config.mining.active_coin
+            )
+        })?;
+
+    info!(
+        "✓ Selected {} miner for {}",
+        adapter.get_name(),
+        config.mining.active_coin
+    );
+
     // Ensure miner binary is available
     let binary_path = miner_manager.ensure_binary_available(&adapter).await?;
     info!("✓ Miner binary ready: {}", binary_path.display());
-    
+
     // Select devices to use (for now, use all compatible devices)
-    let compatible_devices: Vec<_> = devices.iter()
+    let compatible_devices: Vec<_> = devices
+        .iter()
         .filter(|device| {
             // Check if device supports any of the miner's algorithms
-            device.supported_algorithms.iter()
+            device
+                .supported_algorithms
+                .iter()
                 .any(|algo| adapter.get_supported_algorithms().contains(algo))
         })
         .collect();
-    
+
     if compatible_devices.is_empty() {
         return Err("No compatible devices found for the selected miner and coin".into());
     }
-    
-    let device_ids: Vec<String> = compatible_devices.iter()
+
+    let device_ids: Vec<String> = compatible_devices
+        .iter()
         .enumerate()
         .map(|(i, _)| i.to_string())
         .collect();
-    
+
     info!("✓ Using {} compatible device(s)", compatible_devices.len());
     for (i, device) in compatible_devices.iter().enumerate() {
-        info!("  Device {}: {} ({})", i, device.name, format!("{:?}", device.device_type));
+        info!(
+            "  Device {}: {} ({})",
+            i,
+            device.name,
+            format!("{:?}", device.device_type)
+        );
     }
-    
+
     // Initialize profit engine if in auto mode
     let profit_engine_service = if auto_mode {
         info!("Initializing profit switching engine...");
-        
+
         // Load device profiles for profit calculation
         let mut profile_manager = ProfileManager::new()?;
         let profiles = profile_manager.get_all_profiles()?;
-        
+
         if profiles.is_empty() {
-            return Err("No device profiles found for profit switching. Run 'benchmark' command first.".into());
+            return Err(
+                "No device profiles found for profit switching. Run 'benchmark' command first."
+                    .into(),
+            );
         }
-        
+
         // Create algorithm profiles from device profiles
         let mut algorithm_profiles = Vec::new();
         for profile in &profiles {
             for (algo_name, algo_profile) in &profile.algorithms {
-                if config.profit_switching.enabled_algorithms.contains(algo_name) &&
-                   !config.profit_switching.disabled_algorithms.contains(algo_name) {
+                if config
+                    .profit_switching
+                    .enabled_algorithms
+                    .contains(algo_name)
+                    && !config
+                        .profit_switching
+                        .disabled_algorithms
+                        .contains(algo_name)
+                {
                     algorithm_profiles.push(AlgorithmProfile {
                         name: algo_name.clone(),
                         hashrate_hs: algo_profile.average_metrics.avg_hashrate_hs,
-                        power_watts: algo_profile.average_metrics.avg_power_watts.unwrap_or(300.0),
+                        power_watts: algo_profile
+                            .average_metrics
+                            .avg_power_watts
+                            .unwrap_or(300.0),
                         coin_symbol: match algo_name.as_str() {
                             "RandomX" => "monero".to_string(),
                             "Ethash" => "ethereum".to_string(),
@@ -502,130 +578,140 @@ async fn start_mining_command(matches: &clap::ArgMatches) -> Result<(), Box<dyn 
                 }
             }
         }
-        
+
         if algorithm_profiles.is_empty() {
             return Err("No enabled algorithms found for profit switching.".into());
         }
-        
+
         let profit_service = ProfitEngineService::new(&config);
         profit_service.start(algorithm_profiles).await?;
-        
-        info!("✓ Profit engine initialized with {} algorithms", profit_service.get_profitability_rankings().await.len());
-        
+
+        info!(
+            "✓ Profit engine initialized with {} algorithms",
+            profit_service.get_profitability_rankings().await.len()
+        );
+
         Some(profit_service)
     } else {
         None
     };
-    
+
     // Create telemetry channel
     let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<Telemetry>();
-    
+
     // Create process supervisor
-    let mut supervisor = ProcessSupervisor::new(
-        config.clone(),
-        adapter.clone(),
-        binary_path,
-        device_ids,
-    );
-    
+    let mut supervisor =
+        ProcessSupervisor::new(config.clone(), adapter.clone(), binary_path, device_ids);
+
     println!("\n🚀 Starting mining process...");
-    
+
     // Start the mining process
     supervisor.start(telemetry_tx).await?;
-    
+
     println!("✅ Mining started successfully!");
     println!("  Coin: {}", config.mining.active_coin);
     println!("  Pool: {}", config.get_active_pool()?.url);
-    println!("  Wallet: {}...{}", 
-             &config.get_active_wallet()?.address[..8], 
-             &config.get_active_wallet()?.address[config.get_active_wallet()?.address.len()-8..]);
+    println!(
+        "  Wallet: {}...{}",
+        &config.get_active_wallet()?.address[..8],
+        &config.get_active_wallet()?.address[config.get_active_wallet()?.address.len() - 8..]
+    );
     println!("  Miner: {}", adapter.get_name());
     println!("  Devices: {}", compatible_devices.len());
-    
+
     if auto_mode {
         println!("  Mode: Automatic profit switching enabled");
-        println!("  Electricity cost: {:.3} EUR/kWh", config.profit_switching.electricity_eur_per_kwh);
-        println!("  Profit delta threshold: {:.1}%", config.profit_switching.profit_delta_threshold);
-        println!("  Min dwell time: {} minutes", config.profit_switching.min_dwell_time_minutes);
+        println!(
+            "  Electricity cost: {:.3} EUR/kWh",
+            config.profit_switching.electricity_eur_per_kwh
+        );
+        println!(
+            "  Profit delta threshold: {:.1}%",
+            config.profit_switching.profit_delta_threshold
+        );
+        println!(
+            "  Min dwell time: {} minutes",
+            config.profit_switching.min_dwell_time_minutes
+        );
     }
-    
+
     println!("\n📊 Real-time telemetry:");
     println!("========================");
-    
+
     // Set up telemetry display and supervision
-    let supervision_handle = tokio::spawn(async move {
-        supervisor.supervise().await
-    });
-    
+    let mut supervision_handle = tokio::spawn(async move { supervisor.supervise().await });
+
     let telemetry_handle = tokio::spawn(async move {
         let mut last_telemetry_time = std::time::Instant::now();
-        
+
         while let Some(telemetry) = telemetry_rx.recv().await {
             let now = std::time::Instant::now();
-            
+
             // Only display telemetry every 10 seconds to avoid spam
             if now.duration_since(last_telemetry_time) >= Duration::from_secs(10) {
                 print!("\r");
-                print!("Hashrate: {:.2} {} | Shares: A:{} R:{} | ", 
-                       telemetry.hashrate, 
-                       telemetry.hashrate_unit,
-                       telemetry.shares_accepted,
-                       telemetry.shares_rejected);
-                
+                print!(
+                    "Hashrate: {:.2} {} | Shares: A:{} R:{} | ",
+                    telemetry.hashrate,
+                    telemetry.hashrate_unit,
+                    telemetry.shares_accepted,
+                    telemetry.shares_rejected
+                );
+
                 if let Some(temp) = telemetry.temperature_c {
                     print!("Temp: {:.1}°C | ", temp);
                 }
-                
+
                 if let Some(power) = telemetry.power_watts {
                     print!("Power: {:.1}W", power);
                 }
-                
+
                 println!();
                 std::io::Write::flush(&mut std::io::stdout()).ok();
-                
+
                 last_telemetry_time = now;
             }
         }
     });
-    
+
     // Start profit switching task if in auto mode
     let profit_switching_handle = if let Some(profit_service) = profit_engine_service {
         let profit_service_arc = Arc::new(profit_service);
         let profit_service_clone = profit_service_arc.clone();
-        
+
         Some(tokio::spawn(async move {
             profit_service_clone.update_loop().await
         }))
     } else {
         None
     };
-    
+
     println!("\n💡 Press Ctrl+C to stop mining");
     println!("   Mining will continue running in the background...");
-    
+
     // Wait for Ctrl+C or process to finish
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             println!("\n\n🛑 Received shutdown signal...");
             info!("Shutting down mining operation");
-            
+
             // Cancel telemetry display
             telemetry_handle.abort();
-            
+
             // Cancel profit switching if running
             if let Some(profit_handle) = profit_switching_handle {
                 profit_handle.abort();
                 info!("Profit switching engine stopped");
             }
-            
-            // Wait for supervision to finish
-            if let Err(e) = timeout(Duration::from_secs(15), supervision_handle).await {
+
+            supervision_handle.abort();
+            if let Err(e) = timeout(Duration::from_secs(15), &mut supervision_handle).await {
                 warn!("Timeout waiting for mining supervision to shut down: {}", e);
             }
-            
+
             println!("✅ Mining operation stopped");
         }
-        result = supervision_handle => {
+        result = &mut supervision_handle => {
             match result {
                 Ok(Ok(())) => {
                     println!("\n✅ Mining supervision completed normally");
@@ -641,75 +727,74 @@ async fn start_mining_command(matches: &clap::ArgMatches) -> Result<(), Box<dyn 
             }
         }
     }
-    
+
     Ok(())
 }
 
 async fn serve_grpc_command() -> Result<(), Box<dyn std::error::Error>> {
     println!("BUNKER MINER Daemon - gRPC API Server");
     println!("====================================");
-    
+
     info!("Initializing daemon state...");
-    
+
     // Initialize configuration manager
     let mut config_manager = ConfigManager::new()?;
     let config = config_manager.load_config().await?;
-    
+
     info!("✓ Configuration loaded successfully");
-    
+
     // Initialize hardware detector
     let hardware_detector = HardwareDetector::new()?;
     info!("✓ Hardware detector initialized");
-    
+
     // Initialize miner manager
     let miner_manager = MinerManager::new()?;
     info!("✓ Miner manager initialized");
-    
+
     // Create shared daemon state
     let daemon_state = Arc::new(DaemonState::new(
         config.clone(),
         hardware_detector,
         miner_manager,
     ));
-    
+
     info!("✓ Daemon state initialized");
-    
+
     // Create gRPC server
     let grpc_server = GrpcServer::new(daemon_state.clone(), config.grpc.clone());
-    
+
     // Create web dashboard server
-    let web_dashboard_server = WebDashboardServer::new(config.clone(), daemon_state.telemetry_broadcaster.clone());
+    let web_dashboard_server = WebDashboardServer::new(
+        config.clone(),
+        Arc::new(daemon_state.telemetry_broadcaster.clone()),
+    );
 
     // Initialize fleet agent if enabled
-    let fleet_agent_handle = if config.fleet_mode.enabled {
+    let _fleet_agent_handle = if config.fleet_mode.enabled {
         info!("🚀 Fleet mode is enabled, initializing Fleet Agent");
-        
+
         // Create telemetry collection channel
         let (telemetry_tx, telemetry_rx) = mpsc::channel(1000);
-        
+
         // Create shutdown channel
-        let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
-        
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
+
         // Create fleet agent
-        let (fleet_agent, mut remote_command_rx) = FleetAgent::new(
-            config.fleet_mode.clone(),
-            telemetry_rx,
-            shutdown_rx,
-        );
-        
+        let (fleet_agent, mut remote_command_rx) =
+            FleetAgent::new(config.fleet_mode.clone(), telemetry_rx, shutdown_rx);
+
         // Start fleet agent
         let fleet_handle = tokio::spawn(async move {
             if let Err(e) = fleet_agent.run().await {
                 error!("Fleet agent error: {}", e);
             }
         });
-        
+
         // Start remote command handler
-        let daemon_state_clone = daemon_state.clone();
         tokio::spawn(async move {
             while let Ok(command) = remote_command_rx.recv().await {
                 info!("Processing remote command: {}", command.command_type);
-                
+
                 // Handle remote commands here
                 match command.command_type.as_str() {
                     "START_MINING" => {
@@ -717,7 +802,7 @@ async fn serve_grpc_command() -> Result<(), Box<dyn std::error::Error>> {
                         // TODO: Call daemon_state mining start functionality
                     }
                     "STOP_MINING" => {
-                        info!("Executing remote STOP_MINING command"); 
+                        info!("Executing remote STOP_MINING command");
                         // TODO: Call daemon_state mining stop functionality
                     }
                     "GET_STATUS" => {
@@ -740,11 +825,11 @@ async fn serve_grpc_command() -> Result<(), Box<dyn std::error::Error>> {
         tokio::spawn(async move {
             let mut telemetry_receiver = telemetry_broadcaster.subscribe();
             let mut telemetry_collector = TelemetryCollector::new();
-            
+
             while let Ok(telemetry) = telemetry_receiver.recv().await {
                 // Update telemetry collector with miner data
                 telemetry_collector.update_from_miner_telemetry(&telemetry);
-                
+
                 // Send to fleet agent
                 let fleet_telemetry = telemetry_collector.get_current_data();
                 if let Err(e) = telemetry_tx.send(fleet_telemetry).await {
@@ -753,29 +838,39 @@ async fn serve_grpc_command() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         });
-        
+
         Some(fleet_handle)
     } else {
         info!("Fleet mode is disabled");
         None
     };
-    
+
     println!("\n🚀 Starting gRPC API server...");
-    println!("  Address: {}:{}", config.grpc.bind_address, config.grpc.port);
-    println!("  TLS: {}", if config.grpc.tls_enabled { "enabled" } else { "disabled" });
+    println!(
+        "  Address: {}:{}",
+        config.grpc.bind_address, config.grpc.port
+    );
+    println!(
+        "  TLS: {}",
+        if config.grpc.tls_enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
     println!("  Max connections: {}", config.grpc.max_connections);
-    
+
     if config.grpc.bind_address == "127.0.0.1" || config.grpc.bind_address == "localhost" {
         println!("  🔒 Server bound to localhost only for security");
     } else {
         println!("  ⚠️  Server bound to all interfaces - ensure TLS is properly configured!");
     }
-    
+
     println!("\n🌐 Starting web dashboard server...");
     println!("  Address: http://127.0.0.1:{}", config.grpc.port + 100);
     println!("  🔒 Dashboard bound to localhost only for security");
     println!("  🔗 WebSocket telemetry streaming enabled");
-    
+
     if config.fleet_mode.enabled {
         println!("\n⚡ Fleet Management Mode: ENABLED");
         println!("  Controller URL: {}", config.fleet_mode.controller_url);
@@ -783,12 +878,26 @@ async fn serve_grpc_command() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(location) = &config.fleet_mode.location {
             println!("  Location: {}", location);
         }
-        println!("  Remote commands: {}", if config.fleet_mode.allow_remote_commands { "enabled" } else { "disabled" });
-        println!("  API Key: {}", if config.fleet_mode.api_key.is_some() { "configured" } else { "NOT CONFIGURED" });
+        println!(
+            "  Remote commands: {}",
+            if config.fleet_mode.allow_remote_commands {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
+        println!(
+            "  API Key: {}",
+            if config.fleet_mode.api_key.is_some() {
+                "configured"
+            } else {
+                "NOT CONFIGURED"
+            }
+        );
     } else {
         println!("\n⚡ Fleet Management Mode: DISABLED");
     }
-    
+
     println!("\n💡 Available endpoints:");
     println!("  - GetSystemInfo: Get system and device information");
     println!("  - HealthCheck: Check daemon health status");
@@ -796,13 +905,13 @@ async fn serve_grpc_command() -> Result<(), Box<dyn std::error::Error>> {
     println!("  - GetProfitability: Get profitability calculations");
     println!("  - GetConfig/SetConfig: Configuration management");
     println!("  - StartMining/StopMining: Mining operations control");
-    
+
     println!("\n🔧 Use bunker-miner-cli to test the API:");
     println!("  bunker-miner-cli info");
     println!("  bunker-miner-cli watch");
-    
+
     println!("\n💡 Press Ctrl+C to stop both servers");
-    
+
     // Start both servers concurrently
     tokio::select! {
         result = grpc_server.start() => {
@@ -833,7 +942,7 @@ async fn serve_grpc_command() -> Result<(), Box<dyn std::error::Error>> {
             println!("✅ Servers stopped");
         }
     }
-    
+
     Ok(())
 }
 
@@ -844,17 +953,20 @@ mod tests {
     #[tokio::test]
     async fn test_hardware_detector_initialization() {
         let detector = HardwareDetector::new();
-        assert!(detector.is_ok(), "Hardware detector should initialize successfully");
+        assert!(
+            detector.is_ok(),
+            "Hardware detector should initialize successfully"
+        );
     }
 
     #[tokio::test]
     async fn test_device_detection() {
         let mut detector = HardwareDetector::new().expect("Failed to create detector");
         let devices = detector.detect_devices();
-        
+
         // Device detection should succeed even if no devices are found
         assert!(devices.is_ok(), "Device detection should not fail");
-        
+
         // Log detected devices for debugging
         if let Ok(devices) = devices {
             println!("Detected {} devices in test", devices.len());
@@ -867,7 +979,10 @@ mod tests {
     #[tokio::test]
     async fn test_profile_manager_creation() {
         let profile_manager = ProfileManager::new();
-        assert!(profile_manager.is_ok(), "Profile manager should initialize successfully");
+        assert!(
+            profile_manager.is_ok(),
+            "Profile manager should initialize successfully"
+        );
     }
 
     #[test]
@@ -881,43 +996,59 @@ mod tests {
             .subcommand(Command::new("stop"));
 
         // Test benchmark subcommand
-        let matches = cmd.clone().try_get_matches_from(vec!["bunker-miner-daemon", "benchmark"]);
+        let matches = cmd
+            .clone()
+            .try_get_matches_from(vec!["bunker-miner-daemon", "benchmark"]);
         assert!(matches.is_ok());
 
         // Test list-devices subcommand
-        let matches = cmd.clone().try_get_matches_from(vec!["bunker-miner-daemon", "list-devices"]);
+        let matches = cmd
+            .clone()
+            .try_get_matches_from(vec!["bunker-miner-daemon", "list-devices"]);
         assert!(matches.is_ok());
 
         // Test show-profiles subcommand
-        let matches = cmd.clone().try_get_matches_from(vec!["bunker-miner-daemon", "show-profiles"]);
+        let matches = cmd
+            .clone()
+            .try_get_matches_from(vec!["bunker-miner-daemon", "show-profiles"]);
         assert!(matches.is_ok());
-        
+
         // Test start subcommand
-        let matches = cmd.clone().try_get_matches_from(vec!["bunker-miner-daemon", "start"]);
+        let matches = cmd
+            .clone()
+            .try_get_matches_from(vec!["bunker-miner-daemon", "start"]);
         assert!(matches.is_ok());
-        
+
         // Test stop subcommand
-        let matches = cmd.clone().try_get_matches_from(vec!["bunker-miner-daemon", "stop"]);
+        let matches = cmd
+            .clone()
+            .try_get_matches_from(vec!["bunker-miner-daemon", "stop"]);
         assert!(matches.is_ok());
     }
-    
+
     #[tokio::test]
     async fn test_configuration_integration() {
         // Test that ConfigManager can be created without errors
         let config_manager = ConfigManager::new();
-        assert!(config_manager.is_ok(), "ConfigManager should initialize successfully");
-        
+        assert!(
+            config_manager.is_ok(),
+            "ConfigManager should initialize successfully"
+        );
+
         // Test that MinerManager can be created
         let miner_manager = MinerManager::new();
-        assert!(miner_manager.is_ok(), "MinerManager should initialize successfully");
-        
+        assert!(
+            miner_manager.is_ok(),
+            "MinerManager should initialize successfully"
+        );
+
         // Test adapter selection
         let manager = miner_manager.unwrap();
         assert!(manager.get_adapter_for_coin("ethereum").is_some());
         assert!(manager.get_adapter_for_coin("monero").is_some());
         assert!(manager.get_adapter_for_coin("unsupported_coin").is_none());
     }
-    
+
     #[test]
     fn test_telemetry_creation() {
         let telemetry = Telemetry::default();
@@ -926,60 +1057,66 @@ mod tests {
         assert_eq!(telemetry.algorithm, "unknown");
         assert!(telemetry.timestamp > 0);
     }
-    
+
     #[tokio::test]
     async fn test_grpc_server_initialization() {
         // Test that all components can be initialized for gRPC server
         let config_manager = ConfigManager::new();
-        assert!(config_manager.is_ok(), "ConfigManager should initialize for gRPC");
-        
+        assert!(
+            config_manager.is_ok(),
+            "ConfigManager should initialize for gRPC"
+        );
+
         let hardware_detector = HardwareDetector::new();
-        assert!(hardware_detector.is_ok(), "HardwareDetector should initialize for gRPC");
-        
+        assert!(
+            hardware_detector.is_ok(),
+            "HardwareDetector should initialize for gRPC"
+        );
+
         let miner_manager = MinerManager::new();
-        assert!(miner_manager.is_ok(), "MinerManager should initialize for gRPC");
-        
-        if let (Ok(config_mgr), Ok(hw_detector), Ok(miner_mgr)) = 
-            (config_manager, hardware_detector, miner_manager) {
-            
-            let config = config::Config::default();
-            let daemon_state = std::sync::Arc::new(grpc::DaemonState::new(
-                config.clone(),
-                hw_detector,
-                miner_mgr,
-            ));
-            
+        assert!(
+            miner_manager.is_ok(),
+            "MinerManager should initialize for gRPC"
+        );
+
+        if let (Ok(_config_mgr), Ok(hw_detector), Ok(miner_mgr)) =
+            (config_manager, hardware_detector, miner_manager)
+        {
+            let config = bunker_miner_daemon::config::Config::default();
+            let daemon_state =
+                std::sync::Arc::new(DaemonState::new(config.clone(), hw_detector, miner_mgr));
+
             assert_eq!(daemon_state.daemon_version, env!("CARGO_PKG_VERSION"));
             assert_eq!(daemon_state.api_version, "0.1.0");
-            
+
             // Test telemetry broadcaster
             let test_telemetry = Telemetry::default();
             daemon_state.telemetry_broadcaster.broadcast(test_telemetry);
-            
+
             // Should have no subscribers initially
             assert_eq!(daemon_state.telemetry_broadcaster.subscriber_count(), 0);
         }
     }
-    
+
     #[test]
     fn test_grpc_config_validation() {
-        let mut config = config::Config::default();
-        
+        let mut config = bunker_miner_daemon::config::Config::default();
+
         // Test valid gRPC config
         assert!(config.grpc.enabled);
         assert_eq!(config.grpc.bind_address, "127.0.0.1");
         assert_eq!(config.grpc.port, 50051);
-        
+
         // Test invalid configs
         config.grpc.port = 0;
         let config_manager = ConfigManager::new().unwrap();
         assert!(config_manager.validate_config(&config).is_err());
-        
+
         // Reset and test remote access validation
         config.grpc.port = 50051;
         config.grpc.bind_address = "0.0.0.0".to_string();
         assert!(config_manager.validate_config(&config).is_err()); // Should fail without TLS
-        
+
         config.grpc.tls_enabled = true;
         config.grpc.tls_cert_path = Some("/path/to/cert.pem".to_string());
         config.grpc.tls_key_path = Some("/path/to/key.pem".to_string());

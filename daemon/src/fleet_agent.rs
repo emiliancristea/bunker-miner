@@ -9,7 +9,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-use crate::config::{Config, FleetModeConfig};
+use crate::config::FleetModeConfig;
 use crate::telemetry::TelemetryData;
 
 /// Fleet agent for connecting to centralized fleet management controller
@@ -22,7 +22,7 @@ pub struct FleetAgent {
 }
 
 /// Connection state tracking
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ConnectionState {
     pub connected: bool,
     pub last_connection_attempt: Option<Instant>,
@@ -66,18 +66,11 @@ pub enum FleetMessage {
         assigned_rig_id: Option<Uuid>,
     },
     /// Telemetry data from rig to server
-    Telemetry {
-        rig_id: Uuid,
-        data: TelemetryData,
-    },
+    Telemetry { rig_id: Uuid, data: TelemetryData },
     /// Command from server to rig
-    Command {
-        command: RemoteCommand,
-    },
+    Command { command: RemoteCommand },
     /// Command response from rig to server
-    CommandResponse {
-        response: CommandResponse,
-    },
+    CommandResponse { response: CommandResponse },
     /// Heartbeat/ping message
     Heartbeat {
         timestamp: chrono::DateTime<chrono::Utc>,
@@ -87,18 +80,6 @@ pub enum FleetMessage {
         message: String,
         code: Option<String>,
     },
-}
-
-impl Default for ConnectionState {
-    fn default() -> Self {
-        Self {
-            connected: false,
-            last_connection_attempt: None,
-            retry_count: 0,
-            assigned_rig_id: None,
-            last_heartbeat: None,
-        }
-    }
 }
 
 impl FleetAgent {
@@ -147,7 +128,7 @@ impl FleetAgent {
                 }
                 Err(e) => {
                     error!("Fleet agent connection error: {}", e);
-                    
+
                     // Update connection state
                     {
                         let mut state = self.connection_state.write().await;
@@ -165,7 +146,7 @@ impl FleetAgent {
                     // Wait before retrying with exponential backoff
                     let delay = self.calculate_retry_delay().await;
                     warn!("Retrying connection in {} seconds...", delay.as_secs());
-                    
+
                     tokio::select! {
                         _ = time::sleep(delay) => {}
                         _ = self.shutdown_receiver.recv() => {
@@ -189,7 +170,10 @@ impl FleetAgent {
             .await
             .context("Failed to connect to fleet controller")?;
 
-        info!("✓ Connected to fleet controller (status: {})", response.status());
+        info!(
+            "✓ Connected to fleet controller (status: {})",
+            response.status()
+        );
 
         let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
@@ -204,50 +188,42 @@ impl FleetAgent {
         // Send authentication message
         let auth_message = FleetMessage::Auth {
             api_key: self.config.api_key.as_ref().unwrap().clone(),
-            rig_id: self.config.rig_id.as_ref().and_then(|id| Uuid::parse_str(id).ok()),
+            rig_id: self
+                .config
+                .rig_id
+                .as_ref()
+                .and_then(|id| Uuid::parse_str(id).ok()),
         };
 
         let auth_json = serde_json::to_string(&auth_message)
             .context("Failed to serialize authentication message")?;
 
-        ws_sender.send(Message::Text(auth_json)).await
+        ws_sender
+            .send(Message::Text(auth_json))
+            .await
             .context("Failed to send authentication message")?;
 
-        // Start telemetry streaming task
-        let telemetry_sender = ws_sender.clone();
+        // Heartbeats share the main WebSocket sender with telemetry and command responses.
         let telemetry_interval = Duration::from_secs(self.config.telemetry_interval_seconds as u64);
-        let connection_state = Arc::clone(&self.connection_state);
-        
-        tokio::spawn(async move {
-            let mut interval = time::interval(telemetry_interval);
-            loop {
-                interval.tick().await;
-                
-                // Check if still connected
-                {
-                    let state = connection_state.read().await;
-                    if !state.connected {
-                        break;
-                    }
-                }
-
-                // Send heartbeat
-                let heartbeat_message = FleetMessage::Heartbeat {
-                    timestamp: chrono::Utc::now(),
-                };
-
-                if let Ok(heartbeat_json) = serde_json::to_string(&heartbeat_message) {
-                    if let Err(e) = telemetry_sender.clone().send(Message::Text(heartbeat_json)).await {
-                        error!("Failed to send heartbeat: {}", e);
-                        break;
-                    }
-                }
-            }
-        });
+        let mut heartbeat_interval = time::interval(telemetry_interval);
 
         // Main message handling loop
         loop {
             tokio::select! {
+                // Send periodic heartbeat
+                _ = heartbeat_interval.tick() => {
+                    let heartbeat_message = FleetMessage::Heartbeat {
+                        timestamp: chrono::Utc::now(),
+                    };
+
+                    if let Ok(heartbeat_json) = serde_json::to_string(&heartbeat_message) {
+                        if let Err(e) = ws_sender.send(Message::Text(heartbeat_json)).await {
+                            error!("Failed to send heartbeat: {}", e);
+                            break;
+                        }
+                    }
+                }
+
                 // Handle incoming WebSocket messages
                 msg = ws_receiver.next() => {
                     match msg {
@@ -302,15 +278,21 @@ impl FleetAgent {
         &self,
         message_text: &str,
         ws_sender: &mut futures_util::stream::SplitSink<
-            tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+            tokio_tungstenite::WebSocketStream<
+                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+            >,
             Message,
         >,
     ) -> Result<()> {
-        let message: FleetMessage = serde_json::from_str(message_text)
-            .context("Failed to parse incoming fleet message")?;
+        let message: FleetMessage =
+            serde_json::from_str(message_text).context("Failed to parse incoming fleet message")?;
 
         match message {
-            FleetMessage::AuthResponse { success, message, assigned_rig_id } => {
+            FleetMessage::AuthResponse {
+                success,
+                message,
+                assigned_rig_id,
+            } => {
                 if success {
                     info!("✓ Fleet authentication successful: {}", message);
                     if let Some(rig_id) = assigned_rig_id {
@@ -326,12 +308,17 @@ impl FleetAgent {
 
             FleetMessage::Command { command } => {
                 if self.config.allow_remote_commands {
-                    info!("📡 Received remote command: {} (ID: {})", 
-                          command.command_type, command.command_id);
-                    
+                    info!(
+                        "📡 Received remote command: {} (ID: {})",
+                        command.command_type, command.command_id
+                    );
+
                     // Check if command is allowed
                     if !self.config.allowed_commands.contains(&command.command_type) {
-                        warn!("Command {} is not in allowed commands list", command.command_type);
+                        warn!(
+                            "Command {} is not in allowed commands list",
+                            command.command_type
+                        );
                         let response = CommandResponse {
                             command_id: command.command_id,
                             success: false,
@@ -348,7 +335,10 @@ impl FleetAgent {
                         error!("Failed to forward remote command: {}", e);
                     }
                 } else {
-                    warn!("Remote commands are disabled, ignoring command: {}", command.command_type);
+                    warn!(
+                        "Remote commands are disabled, ignoring command: {}",
+                        command.command_type
+                    );
                     let response = CommandResponse {
                         command_id: command.command_id,
                         success: false,
@@ -378,7 +368,9 @@ impl FleetAgent {
         &self,
         telemetry: TelemetryData,
         ws_sender: &mut futures_util::stream::SplitSink<
-            tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+            tokio_tungstenite::WebSocketStream<
+                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+            >,
             Message,
         >,
     ) -> Result<()> {
@@ -392,7 +384,9 @@ impl FleetAgent {
             let telemetry_json = serde_json::to_string(&telemetry_message)
                 .context("Failed to serialize telemetry message")?;
 
-            ws_sender.send(Message::Text(telemetry_json)).await
+            ws_sender
+                .send(Message::Text(telemetry_json))
+                .await
                 .context("Failed to send telemetry message")?;
 
             debug!("📊 Sent telemetry to fleet controller");
@@ -408,7 +402,9 @@ impl FleetAgent {
         &self,
         response: CommandResponse,
         ws_sender: &mut futures_util::stream::SplitSink<
-            tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+            tokio_tungstenite::WebSocketStream<
+                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+            >,
             Message,
         >,
     ) -> Result<()> {
@@ -417,7 +413,9 @@ impl FleetAgent {
         let response_json = serde_json::to_string(&response_message)
             .context("Failed to serialize command response")?;
 
-        ws_sender.send(Message::Text(response_json)).await
+        ws_sender
+            .send(Message::Text(response_json))
+            .await
             .context("Failed to send command response")?;
 
         debug!("📤 Sent command response to fleet controller");
@@ -428,7 +426,7 @@ impl FleetAgent {
     /// Check if we should retry connection
     async fn should_retry(&self) -> bool {
         let state = self.connection_state.read().await;
-        
+
         if self.config.retry_settings.max_attempts == 0 {
             return true; // Unlimited retries
         }
@@ -439,10 +437,15 @@ impl FleetAgent {
     /// Calculate delay before next retry attempt
     async fn calculate_retry_delay(&self) -> Duration {
         let state = self.connection_state.read().await;
-        
+
         let delay_seconds = (self.config.retry_settings.initial_delay_seconds as f64
-            * self.config.retry_settings.backoff_multiplier.powi(state.retry_count as i32))
-            .min(self.config.retry_settings.max_delay_seconds as f64) as u64;
+            * self
+                .config
+                .retry_settings
+                .backoff_multiplier
+                .powi(state.retry_count as i32))
+        .min(self.config.retry_settings.max_delay_seconds as f64)
+            as u64;
 
         Duration::from_secs(delay_seconds)
     }

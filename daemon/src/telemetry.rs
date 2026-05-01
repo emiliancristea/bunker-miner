@@ -1,6 +1,5 @@
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 /// Standardized telemetry data structure for fleet management
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,12 +115,12 @@ impl TelemetryCollector {
         self.current_data.shares_accepted = miner_telemetry.shares_accepted as u64;
         self.current_data.shares_rejected = miner_telemetry.shares_rejected as u64;
         self.current_data.pool_url = miner_telemetry.pool_url.clone();
-        
+
         // Extract basic telemetry information
         self.current_data.device_count = 1; // Single device reporting for now
         self.current_data.total_power = miner_telemetry.power_watts.unwrap_or(0.0);
         self.current_data.avg_temperature = miner_telemetry.temperature_c.unwrap_or(0.0);
-        
+
         // Create basic device telemetry
         self.current_data.device_telemetry = vec![DeviceTelemetry {
             device_id: "primary".to_string(),
@@ -131,10 +130,14 @@ impl TelemetryCollector {
             temperature: miner_telemetry.temperature_c.unwrap_or(0.0),
             fan_speed: (miner_telemetry.fan_speed_percent.unwrap_or(0.0) * 50.0) as u32, // Estimate RPM
             utilization: 100, // Assume full utilization when mining
-            status: if miner_telemetry.hashrate > 0.0 { "mining".to_string() } else { "idle".to_string() },
-            memory_used: 0, // Not available in current telemetry
+            status: if miner_telemetry.hashrate > 0.0 {
+                "mining".to_string()
+            } else {
+                "idle".to_string()
+            },
+            memory_used: 0,  // Not available in current telemetry
             memory_total: 0, // Not available in current telemetry
-            core_clock: 0, // Not available in current telemetry
+            core_clock: 0,   // Not available in current telemetry
             memory_clock: 0, // Not available in current telemetry
         }];
     }
@@ -165,5 +168,11 @@ impl TelemetryCollector {
                 None => "Unknown".to_string(),
             }
         )
+    }
+}
+
+impl Default for TelemetryCollector {
+    fn default() -> Self {
+        Self::new()
     }
 }

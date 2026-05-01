@@ -6,8 +6,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::{get, get_service},
-    Extension,
-    Router,
+    Extension, Router,
 };
 use serde_json::json;
 use std::{
@@ -16,7 +15,6 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::broadcast;
-use tower::ServiceBuilder;
 use tower_http::{
     cors::{Any, CorsLayer},
     services::ServeDir,
@@ -53,18 +51,12 @@ impl WebDashboardServer {
         // Build our application with routes
         let app = create_router(app_state);
 
-        // Create listener
-        let listener = tokio::net::TcpListener::bind(addr).await?;
-
         info!("Web dashboard server listening on {}", addr);
         info!("Dashboard URL: http://{}", addr);
 
-        // Start the server
-        axum::serve(
-            listener,
-            app.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .await?;
+        axum::Server::bind(&addr)
+            .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+            .await?;
 
         Ok(())
     }
@@ -156,7 +148,7 @@ async fn handle_websocket(socket: WebSocket, state: AppState, addr: SocketAddr) 
     let mut telemetry_receiver = state.telemetry_broadcaster.subscribe();
 
     // Spawn task to handle incoming messages (ping/pong, close, etc.)
-    let ping_task = tokio::spawn(async move {
+    let mut ping_task = tokio::spawn(async move {
         while let Some(msg) = receiver.next().await {
             match msg {
                 Ok(Message::Close(_)) => {
@@ -166,11 +158,8 @@ async fn handle_websocket(socket: WebSocket, state: AppState, addr: SocketAddr) 
                 Ok(Message::Pong(_)) => {
                     debug!("Received pong from {}", addr);
                 }
-                Ok(Message::Ping(data)) => {
-                    debug!("Received ping from {}, sending pong", addr);
-                    if sender.send(Message::Pong(data)).await.is_err() {
-                        break;
-                    }
+                Ok(Message::Ping(_)) => {
+                    debug!("Received ping from {}", addr);
                 }
                 Ok(Message::Text(_)) | Ok(Message::Binary(_)) => {
                     // We don't handle client messages in this simple implementation
@@ -185,7 +174,7 @@ async fn handle_websocket(socket: WebSocket, state: AppState, addr: SocketAddr) 
     });
 
     // Main telemetry broadcasting loop
-    let broadcast_task = tokio::spawn(async move {
+    let mut broadcast_task = tokio::spawn(async move {
         let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(30));
 
         loop {
@@ -240,10 +229,10 @@ async fn handle_websocket(socket: WebSocket, state: AppState, addr: SocketAddr) 
 
     // Wait for either task to complete
     tokio::select! {
-        _ = ping_task => {
+        _ = &mut ping_task => {
             broadcast_task.abort();
         }
-        _ = broadcast_task => {
+        _ = &mut broadcast_task => {
             ping_task.abort();
         }
     }

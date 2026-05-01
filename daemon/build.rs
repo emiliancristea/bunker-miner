@@ -12,25 +12,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(&generated_dir)?;
 
     // Get the path to the protos directory
-    let proto_dir = manifest_dir
-        .parent()
-        .unwrap()
-        .join("protos");
-    
+    let proto_dir = manifest_dir.parent().unwrap().join("protos");
+
     let proto_file = proto_dir.join("daemon_api.v1.proto");
-    
+
     println!("cargo:rerun-if-changed={}", proto_file.display());
     println!("cargo:rerun-if-changed=build.rs");
-    
+
     // Configure tonic-build for comprehensive gRPC generation
     tonic_build::configure()
         .build_server(true)
         .build_client(true)
         .out_dir(generated_dir)
-        .type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]")
         .compile(&[proto_file], &[proto_dir])?;
-    
+
     println!("Generated gRPC code from daemon_api.v1.proto");
-    
+
     Ok(())
 }

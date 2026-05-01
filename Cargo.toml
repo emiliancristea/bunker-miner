@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "daemon",
     "libs/common-rust",
     "infra/stubs/coin-daemon-stub",
     "infra/stubs/fleet-controller-stub",
@@ -9,7 +10,6 @@ members = [
 exclude = [
     # Product crates remain outside the enforced workspace until their active
     # placeholder paths and compile blockers are resolved.
-    "daemon",
     "fleet",
     "pool",
     # Developer tools are quarantined until their generated protobuf API usage

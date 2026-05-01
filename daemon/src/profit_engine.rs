@@ -1,14 +1,12 @@
-use std::collections::HashMap;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use serde::{Deserialize, Serialize};
-use tokio::time;
-use anyhow::{Result, Context};
-use reqwest::Client;
-use tracing::{debug, info, warn, error};
 use crate::config::Config;
 use crate::overclocking::OverclockingEngine;
 use crate::power_tuning::PowerTuningEngine;
-use crate::hardware::MiningDevice;
+use anyhow::{Context, Result};
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::time;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BunkerPoolStats {
@@ -89,11 +87,15 @@ impl ProfitEngine {
             .user_agent("BUNKER-MINER/0.1.0");
 
         #[cfg(feature = "proxy")]
-        if let Some(proxy_url) = &config.profit_switching.proxy_url {
+        let client_builder = if let Some(proxy_url) = &config.profit_switching.proxy_url {
             if let Ok(proxy) = reqwest::Proxy::all(proxy_url) {
-                client_builder = client_builder.proxy(proxy);
+                client_builder.proxy(proxy)
+            } else {
+                client_builder
             }
-        }
+        } else {
+            client_builder
+        };
 
         Self {
             http_client: client_builder.build().unwrap_or_else(|_| Client::new()),
@@ -105,7 +107,7 @@ impl ProfitEngine {
             last_switch_time: UNIX_EPOCH,
             profit_delta_threshold: config.profit_switching.profit_delta_threshold,
             min_dwell_time: Duration::from_secs(
-                config.profit_switching.min_dwell_time_minutes * 60
+                config.profit_switching.min_dwell_time_minutes * 60,
             ),
             electricity_rate_eur_per_kwh: config.profit_switching.electricity_eur_per_kwh,
             pool_fee_percent: config.profit_switching.pool_fee_percent.unwrap_or(1.0),
@@ -113,27 +115,26 @@ impl ProfitEngine {
     }
 
     pub async fn initialize(&mut self, profiles: Vec<AlgorithmProfile>) -> Result<()> {
-        self.algorithm_profiles = profiles.into_iter()
-            .filter(|p| p.enabled)
-            .collect();
-        
+        self.algorithm_profiles = profiles.into_iter().filter(|p| p.enabled).collect();
+
         tracing::info!(
             "Profit engine initialized with {} enabled algorithms",
             self.algorithm_profiles.len()
         );
-        
+
         self.refresh_market_data().await?;
         Ok(())
     }
 
     pub async fn refresh_market_data(&mut self) -> Result<()> {
-        tracing::debug("Refreshing market data from external APIs");
-        
-        let coin_symbols: Vec<String> = self.algorithm_profiles
+        tracing::debug!("Refreshing market data from external APIs");
+
+        let coin_symbols: Vec<String> = self
+            .algorithm_profiles
             .iter()
             .map(|p| p.coin_symbol.clone())
             .collect();
-        
+
         if coin_symbols.is_empty() {
             return Ok(());
         }
@@ -152,20 +153,19 @@ impl ProfitEngine {
             (Ok(prices), Ok(stats), Err(bunker_err)) => {
                 self.coin_prices = prices;
                 self.network_stats = stats;
-                tracing::warn!("BUNKER POOL stats unavailable: {}, using fallback", bunker_err);
+                tracing::warn!(
+                    "BUNKER POOL stats unavailable: {}, using fallback",
+                    bunker_err
+                );
                 tracing::info!("Market data refreshed successfully (external sources only)");
             }
-            (Err(price_err), Ok(_)) => {
+            (Err(price_err), _, _) => {
                 tracing::warn!("Failed to fetch coin prices: {}", price_err);
                 return Err(price_err);
             }
-            (Ok(_), Err(stats_err)) => {
+            (_, Err(stats_err), _) => {
                 tracing::warn!("Failed to fetch network stats: {}", stats_err);
                 return Err(stats_err);
-            }
-            (Err(price_err), Err(_)) => {
-                tracing::error!("Failed to fetch both prices and network stats");
-                return Err(price_err);
             }
         }
 
@@ -181,7 +181,8 @@ impl ProfitEngine {
 
         tracing::debug!("Fetching coin prices from: {}", url);
 
-        let response = self.http_client
+        let response = self
+            .http_client
             .get(&url)
             .send()
             .await
@@ -209,21 +210,27 @@ impl ProfitEngine {
             if let Some(coin_data) = json.get(symbol) {
                 if let (Some(price), Some(last_updated)) = (
                     coin_data.get("eur").and_then(|v| v.as_f64()),
-                    coin_data.get("last_updated_at").and_then(|v| v.as_u64())
+                    coin_data.get("last_updated_at").and_then(|v| v.as_u64()),
                 ) {
-                    prices.insert(symbol.clone(), CoinPrice {
-                        symbol: symbol.clone(),
-                        price_eur: price,
-                        last_updated,
-                    });
+                    prices.insert(
+                        symbol.clone(),
+                        CoinPrice {
+                            symbol: symbol.clone(),
+                            price_eur: price,
+                            last_updated,
+                        },
+                    );
                 }
             } else {
                 tracing::warn!("No price data found for symbol: {}", symbol);
-                prices.insert(symbol.clone(), CoinPrice {
-                    symbol: symbol.clone(),
-                    price_eur: 0.0,
-                    last_updated: current_time,
-                });
+                prices.insert(
+                    symbol.clone(),
+                    CoinPrice {
+                        symbol: symbol.clone(),
+                        price_eur: 0.0,
+                        last_updated: current_time,
+                    },
+                );
             }
         }
 
@@ -245,12 +252,15 @@ impl ProfitEngine {
                         stats.insert("RandomX".to_string(), xmr_stats);
                     } else {
                         tracing::warn!("Failed to fetch RandomX network stats, using defaults");
-                        stats.insert("RandomX".to_string(), NetworkStats {
-                            algorithm: "RandomX".to_string(),
-                            network_difficulty: 100000000000.0,
-                            block_reward: 0.6,
-                            last_updated: current_time,
-                        });
+                        stats.insert(
+                            "RandomX".to_string(),
+                            NetworkStats {
+                                algorithm: "RandomX".to_string(),
+                                network_difficulty: 100000000000.0,
+                                block_reward: 0.6,
+                                last_updated: current_time,
+                            },
+                        );
                     }
                 }
                 "Ethash" => {
@@ -258,22 +268,28 @@ impl ProfitEngine {
                         stats.insert("Ethash".to_string(), eth_stats);
                     } else {
                         tracing::warn!("Failed to fetch Ethash network stats, using defaults");
-                        stats.insert("Ethash".to_string(), NetworkStats {
-                            algorithm: "Ethash".to_string(),
-                            network_difficulty: 1000000000000000.0,
-                            block_reward: 2.0,
-                            last_updated: current_time,
-                        });
+                        stats.insert(
+                            "Ethash".to_string(),
+                            NetworkStats {
+                                algorithm: "Ethash".to_string(),
+                                network_difficulty: 1000000000000000.0,
+                                block_reward: 2.0,
+                                last_updated: current_time,
+                            },
+                        );
                     }
                 }
                 _ => {
                     tracing::warn!("Unknown algorithm: {}, using default stats", profile.name);
-                    stats.insert(profile.name.clone(), NetworkStats {
-                        algorithm: profile.name.clone(),
-                        network_difficulty: 1000000.0,
-                        block_reward: 1.0,
-                        last_updated: current_time,
-                    });
+                    stats.insert(
+                        profile.name.clone(),
+                        NetworkStats {
+                            algorithm: profile.name.clone(),
+                            network_difficulty: 1000000.0,
+                            block_reward: 1.0,
+                            last_updated: current_time,
+                        },
+                    );
                 }
             }
         }
@@ -283,8 +299,9 @@ impl ProfitEngine {
 
     async fn fetch_xmr_network_stats(&self) -> Result<NetworkStats> {
         let url = "https://api.xmrpool.net/stats";
-        
-        let response = self.http_client
+
+        let response = self
+            .http_client
             .get(url)
             .send()
             .await
@@ -321,8 +338,9 @@ impl ProfitEngine {
 
     async fn fetch_eth_network_stats(&self) -> Result<NetworkStats> {
         let url = "https://api.ethermine.org/networkStats";
-        
-        let response = self.http_client
+
+        let response = self
+            .http_client
             .get(url)
             .send()
             .await
@@ -359,7 +377,7 @@ impl ProfitEngine {
 
         // Fetch stats for each supported algorithm from BUNKER POOL API
         let algorithms = vec!["SHA256", "Ethash", "RandomX", "Scrypt"];
-        
+
         for algorithm in algorithms {
             match self.fetch_single_bunker_pool_stats(algorithm).await {
                 Ok(pool_stats) => {
@@ -368,17 +386,20 @@ impl ProfitEngine {
                 Err(e) => {
                     tracing::warn!("Failed to fetch BUNKER POOL stats for {}: {}", algorithm, e);
                     // Create fallback stats with preferential treatment for BUNKER POOL
-                    stats.insert(algorithm.to_string(), BunkerPoolStats {
-                        algorithm: algorithm.to_string(),
-                        current_hashrate: 0.0,
-                        pool_fee_percent: 1.0,
-                        minimum_payout: 0.1,
-                        effective_fee_percent: 0.5, // 50% lower effective fee
-                        last_block_time: current_time,
-                        active_miners: 0,
-                        network_difficulty: 1000000.0,
-                        pool_luck_24h: 100.0,
-                    });
+                    stats.insert(
+                        algorithm.to_string(),
+                        BunkerPoolStats {
+                            algorithm: algorithm.to_string(),
+                            current_hashrate: 0.0,
+                            pool_fee_percent: 1.0,
+                            minimum_payout: 0.1,
+                            effective_fee_percent: 0.5, // 50% lower effective fee
+                            last_block_time: current_time,
+                            active_miners: 0,
+                            network_difficulty: 1000000.0,
+                            pool_luck_24h: 100.0,
+                        },
+                    );
                 }
             }
         }
@@ -387,11 +408,15 @@ impl ProfitEngine {
     }
 
     async fn fetch_single_bunker_pool_stats(&self, algorithm: &str) -> Result<BunkerPoolStats> {
-        let url = format!("https://api.bunkerminer.com/pool/stats/{}", algorithm.to_lowercase());
-        
+        let url = format!(
+            "https://api.bunkerminer.com/pool/stats/{}",
+            algorithm.to_lowercase()
+        );
+
         tracing::debug!("Fetching BUNKER POOL stats from: {}", url);
 
-        let response = self.http_client
+        let response = self
+            .http_client
             .get(&url)
             .header("User-Agent", "BUNKER-MINER-DAEMON/0.1.0")
             .header("X-Client-Type", "bunker-miner")
@@ -418,10 +443,7 @@ impl ProfitEngine {
 
         Ok(BunkerPoolStats {
             algorithm: algorithm.to_string(),
-            current_hashrate: json
-                .get("hashrate")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0),
+            current_hashrate: json.get("hashrate").and_then(|v| v.as_f64()).unwrap_or(0.0),
             pool_fee_percent: json
                 .get("fee_percent")
                 .and_then(|v| v.as_f64())
@@ -466,34 +488,53 @@ impl ProfitEngine {
             results.push(profit_data);
         }
 
-        results.sort_by(|a, b| b.net_profit_eur_per_day.partial_cmp(&a.net_profit_eur_per_day).unwrap());
+        results.sort_by(|a, b| {
+            b.net_profit_eur_per_day
+                .partial_cmp(&a.net_profit_eur_per_day)
+                .unwrap()
+        });
         results
     }
 
-    fn calculate_net_profit(&self, profile: &AlgorithmProfile, timestamp: u64) -> ProfitabilityData {
+    fn calculate_net_profit(
+        &self,
+        profile: &AlgorithmProfile,
+        timestamp: u64,
+    ) -> ProfitabilityData {
         let coin_price = self.coin_prices.get(&profile.coin_symbol);
         let network_stats = self.network_stats.get(&profile.name);
         let bunker_pool_stats = self.bunker_pool_stats.get(&profile.name);
 
-        let (revenue_per_day, cost_per_day, net_profit_per_day) = match (coin_price, network_stats) {
+        let (revenue_per_day, cost_per_day, net_profit_per_day) = match (coin_price, network_stats)
+        {
             (Some(price), Some(stats)) => {
-                let revenue = (profile.hashrate_hs * stats.block_reward * price.price_eur) / stats.network_difficulty;
-                let cost = (profile.power_watts / 1000.0) * 24.0 * self.electricity_rate_eur_per_kwh;
-                
+                let revenue = (profile.hashrate_hs * stats.block_reward * price.price_eur)
+                    / stats.network_difficulty;
+                let cost =
+                    (profile.power_watts / 1000.0) * 24.0 * self.electricity_rate_eur_per_kwh;
+
                 // Use BUNKER POOL's effective fee if available (preferential treatment)
                 let effective_fee_percent = if let Some(bunker_stats) = bunker_pool_stats {
-                    tracing::debug!("Using BUNKER POOL effective fee of {}% for {} (vs standard {}%)", 
-                                  bunker_stats.effective_fee_percent, profile.name, self.pool_fee_percent);
+                    tracing::debug!(
+                        "Using BUNKER POOL effective fee of {}% for {} (vs standard {}%)",
+                        bunker_stats.effective_fee_percent,
+                        profile.name,
+                        self.pool_fee_percent
+                    );
                     bunker_stats.effective_fee_percent
                 } else {
                     self.pool_fee_percent
                 };
-                
+
                 let net_profit = (revenue * (1.0 - effective_fee_percent / 100.0)) - cost;
                 (revenue, cost, net_profit)
             }
             _ => {
-                tracing::warn!("Missing market data for {}/{}", profile.name, profile.coin_symbol);
+                tracing::warn!(
+                    "Missing market data for {}/{}",
+                    profile.name,
+                    profile.coin_symbol
+                );
                 (0.0, 0.0, 0.0)
             }
         };
@@ -511,7 +552,7 @@ impl ProfitEngine {
 
     pub fn evaluate_switching_decision(&mut self) -> SwitchingDecision {
         let profitability_rankings = self.calculate_profitability();
-        
+
         if profitability_rankings.is_empty() {
             return SwitchingDecision {
                 should_switch: false,
@@ -600,10 +641,10 @@ impl ProfitEngine {
 
     pub fn execute_switch(&mut self, target_algorithm: String) -> Result<()> {
         tracing::info!("Executing switch to algorithm: {}", target_algorithm);
-        
+
         self.current_algorithm = Some(target_algorithm);
         self.last_switch_time = SystemTime::now();
-        
+
         Ok(())
     }
 
@@ -644,40 +685,49 @@ impl ProfitEngine {
 
 pub struct ProfitEngineService {
     profit_engine: tokio::sync::Mutex<ProfitEngine>,
-    overclocking_engine: std::sync::Arc<tokio::sync::Mutex<OverclockingEngine>>,
-    power_tuning_engine: std::sync::Arc<tokio::sync::Mutex<PowerTuningEngine>>,
+    _overclocking_engine: std::sync::Arc<tokio::sync::Mutex<OverclockingEngine>>,
+    _power_tuning_engine: std::sync::Arc<tokio::sync::Mutex<PowerTuningEngine>>,
     update_interval: Duration,
     is_running: std::sync::atomic::AtomicBool,
 }
 
 impl ProfitEngineService {
     pub fn new(config: &Config) -> Self {
-        let update_interval = Duration::from_secs(
-            config.profit_switching.update_interval_minutes.unwrap_or(5) * 60
-        );
+        let update_interval =
+            Duration::from_secs(config.profit_switching.update_interval_minutes.unwrap_or(5) * 60);
 
         Self {
             profit_engine: tokio::sync::Mutex::new(ProfitEngine::new(config)),
+            _overclocking_engine: std::sync::Arc::new(tokio::sync::Mutex::new(
+                OverclockingEngine::new(),
+            )),
+            _power_tuning_engine: std::sync::Arc::new(tokio::sync::Mutex::new(
+                PowerTuningEngine::new(),
+            )),
             update_interval,
             is_running: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
     pub async fn start(&self, profiles: Vec<AlgorithmProfile>) -> Result<()> {
-        self.is_running.store(true, std::sync::atomic::Ordering::SeqCst);
-        
+        self.is_running
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+
         {
             let mut engine = self.profit_engine.lock().await;
             engine.initialize(profiles).await?;
         }
 
-        tracing::info!("Profit engine service started with {}s update interval", 
-                      self.update_interval.as_secs());
+        tracing::info!(
+            "Profit engine service started with {}s update interval",
+            self.update_interval.as_secs()
+        );
         Ok(())
     }
 
     pub async fn stop(&self) {
-        self.is_running.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.is_running
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         tracing::info!("Profit engine service stopped");
     }
 

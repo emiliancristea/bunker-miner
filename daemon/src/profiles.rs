@@ -1,10 +1,10 @@
 /*!
  * BUNKER MINER - Device Profile Management
- * 
+ *
  * This module manages persistent storage and retrieval of device performance profiles
  * generated through benchmarking. Device profiles are the foundation for intelligent
  * mining decisions and profit optimization.
- * 
+ *
  * Key Features:
  * - Persistent storage of benchmark results as device profiles
  * - JSON-based profile format for portability and debugging
@@ -14,16 +14,17 @@
  * - Profile caching and performance optimization
  */
 
-use crate::benchmarking::{BenchmarkResult, DeviceBenchmarkReport, BenchmarkStatus};
-use crate::hardware::{MiningDevice, DeviceType};
-use anyhow::{Context, Result, anyhow};
+use crate::benchmarking::{BenchmarkResult, DeviceBenchmarkReport};
+use crate::hardware::MiningDevice;
+use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
-use tracing::{debug, info, warn, error};
+use sysinfo::{CpuExt, SystemExt};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 /// Version of the profile format (for future compatibility)
@@ -158,8 +159,7 @@ impl ProfileManager {
 
         // Create config directory if it doesn't exist
         if !config_dir.exists() {
-            fs::create_dir_all(&config_dir)
-                .context("Failed to create configuration directory")?;
+            fs::create_dir_all(&config_dir).context("Failed to create configuration directory")?;
             info!("Created configuration directory: {}", config_dir.display());
         }
 
@@ -169,8 +169,10 @@ impl ProfileManager {
             cached_collection: None,
         };
 
-        info!("Profile manager initialized with config dir: {}", 
-              manager.config_dir.display());
+        info!(
+            "Profile manager initialized with config dir: {}",
+            manager.config_dir.display()
+        );
 
         Ok(manager)
     }
@@ -195,13 +197,12 @@ impl ProfileManager {
     pub fn load_profiles(&mut self) -> Result<ProfileCollection> {
         if self.profiles_file.exists() {
             info!("Loading profiles from: {}", self.profiles_file.display());
-            
-            let file = File::open(&self.profiles_file)
-                .context("Failed to open profiles file")?;
-            
+
+            let file = File::open(&self.profiles_file).context("Failed to open profiles file")?;
+
             let reader = BufReader::new(file);
-            let collection: ProfileCollection = serde_json::from_reader(reader)
-                .context("Failed to parse profiles JSON")?;
+            let collection: ProfileCollection =
+                serde_json::from_reader(reader).context("Failed to parse profiles JSON")?;
 
             // Validate collection integrity
             self.validate_collection(&collection)?;
@@ -233,9 +234,8 @@ impl ProfileManager {
         }
 
         // Write the collection to file
-        let file = File::create(&self.profiles_file)
-            .context("Failed to create profiles file")?;
-        
+        let file = File::create(&self.profiles_file).context("Failed to create profiles file")?;
+
         let writer = BufWriter::new(file);
         serde_json::to_writer_pretty(writer, collection)
             .context("Failed to write profiles JSON")?;
@@ -243,26 +243,31 @@ impl ProfileManager {
         // Update cache
         self.cached_collection = Some(collection.clone());
 
-        info!("Successfully saved profiles to: {}", self.profiles_file.display());
+        info!(
+            "Successfully saved profiles to: {}",
+            self.profiles_file.display()
+        );
         Ok(())
     }
 
     /// Create device profile from benchmark report
-    pub fn create_profile_from_benchmark(&self, report: &DeviceBenchmarkReport) -> Result<DeviceProfile> {
+    pub fn create_profile_from_benchmark(
+        &self,
+        report: &DeviceBenchmarkReport,
+    ) -> Result<DeviceProfile> {
         info!("Creating profile for device: {}", report.device.name);
 
         let mut algorithms = HashMap::new();
 
         // Process each successful benchmark result
-        let successful_results: Vec<_> = report.results.iter()
-            .filter(|r| r.success)
-            .collect();
+        let successful_results: Vec<_> = report.results.iter().filter(|r| r.success).collect();
 
         // Group results by algorithm
         let mut algorithm_groups: HashMap<String, Vec<&BenchmarkResult>> = HashMap::new();
         for result in &successful_results {
-            algorithm_groups.entry(result.algorithm.clone())
-                .or_insert_with(Vec::new)
+            algorithm_groups
+                .entry(result.algorithm.clone())
+                .or_default()
                 .push(result);
         }
 
@@ -286,28 +291,36 @@ impl ProfileManager {
             checksum: None, // Will be calculated during save
         };
 
-        info!("Created profile with {} algorithms", profile.algorithms.len());
+        info!(
+            "Created profile with {} algorithms",
+            profile.algorithms.len()
+        );
         Ok(profile)
     }
 
     /// Create algorithm profile from benchmark results
-    fn create_algorithm_profile(&self, algorithm: &str, results: &[&BenchmarkResult]) -> Result<AlgorithmProfile> {
+    fn create_algorithm_profile(
+        &self,
+        algorithm: &str,
+        results: &[&BenchmarkResult],
+    ) -> Result<AlgorithmProfile> {
         if results.is_empty() {
             return Err(anyhow!("Cannot create algorithm profile with no results"));
         }
 
         // Find the best result (highest hashrate)
-        let best_result = results.iter()
+        let best_result = results
+            .iter()
             .max_by(|a, b| a.hashrate_hs.partial_cmp(&b.hashrate_hs).unwrap())
-            .unwrap()
-            .clone()
-            .clone();
+            .map(|result| (*result).clone())
+            .unwrap();
 
         // Calculate average metrics
         let avg_metrics = self.calculate_average_metrics(results)?;
 
         // Get the latest benchmark timestamp
-        let last_benchmarked = results.iter()
+        let last_benchmarked = results
+            .iter()
             .map(|r| r.end_time)
             .max()
             .unwrap_or(Utc::now());
@@ -329,34 +342,33 @@ impl ProfileManager {
         }
 
         let sample_count = results.len() as u32;
-        
+
         // Calculate hashrate statistics
         let hashrates: Vec<f64> = results.iter().map(|r| r.hashrate_hs).collect();
         let avg_hashrate_hs = hashrates.iter().sum::<f64>() / hashrates.len() as f64;
-        
+
         let hashrate_std_dev = if hashrates.len() > 1 {
-            let variance = hashrates.iter()
+            let variance = hashrates
+                .iter()
                 .map(|hr| (hr - avg_hashrate_hs).powi(2))
-                .sum::<f64>() / (hashrates.len() - 1) as f64;
+                .sum::<f64>()
+                / (hashrates.len() - 1) as f64;
             Some(variance.sqrt())
         } else {
             None
         };
 
         // Calculate power statistics
-        let power_readings: Vec<f64> = results.iter()
-            .filter_map(|r| r.power_watts)
-            .collect();
+        let power_readings: Vec<f64> = results.iter().filter_map(|r| r.power_watts).collect();
         let avg_power_watts = if !power_readings.is_empty() {
             Some(power_readings.iter().sum::<f64>() / power_readings.len() as f64)
         } else {
             None
         };
 
-        // Calculate temperature statistics  
-        let temperature_readings: Vec<f32> = results.iter()
-            .filter_map(|r| r.temperature_c)
-            .collect();
+        // Calculate temperature statistics
+        let temperature_readings: Vec<f32> =
+            results.iter().filter_map(|r| r.temperature_c).collect();
         let avg_temperature_c = if !temperature_readings.is_empty() {
             Some(temperature_readings.iter().sum::<f32>() / temperature_readings.len() as f32)
         } else {
@@ -390,7 +402,9 @@ impl ProfileManager {
             cpu: sysinfo::System::new().global_cpu_info().brand().to_string(),
             memory_mb: sysinfo::System::new().total_memory() / 1024 / 1024,
             gpu_driver: device.driver_version.clone(),
-            os_version: sysinfo::System::new().long_os_version().unwrap_or_else(|| "Unknown".to_string()),
+            os_version: sysinfo::System::new()
+                .long_os_version()
+                .unwrap_or_else(|| "Unknown".to_string()),
         };
 
         Ok(ProfileMetadata {
@@ -404,18 +418,24 @@ impl ProfileManager {
     }
 
     /// Update an existing profile with new benchmark data
-    pub fn update_profile(&self, existing_profile: &mut DeviceProfile, new_report: &DeviceBenchmarkReport) -> Result<()> {
-        info!("Updating profile for device: {}", existing_profile.device.name);
+    pub fn update_profile(
+        &self,
+        existing_profile: &mut DeviceProfile,
+        new_report: &DeviceBenchmarkReport,
+    ) -> Result<()> {
+        info!(
+            "Updating profile for device: {}",
+            existing_profile.device.name
+        );
 
-        let successful_results: Vec<_> = new_report.results.iter()
-            .filter(|r| r.success)
-            .collect();
+        let successful_results: Vec<_> = new_report.results.iter().filter(|r| r.success).collect();
 
         // Group new results by algorithm
         let mut algorithm_groups: HashMap<String, Vec<&BenchmarkResult>> = HashMap::new();
         for result in &successful_results {
-            algorithm_groups.entry(result.algorithm.clone())
-                .or_insert_with(Vec::new)
+            algorithm_groups
+                .entry(result.algorithm.clone())
+                .or_default()
                 .push(result);
         }
 
@@ -426,27 +446,39 @@ impl ProfileManager {
                 self.update_algorithm_profile(existing_algorithm, &new_results)?;
             } else {
                 // Create new algorithm profile
-                let new_algorithm_profile = self.create_algorithm_profile(&algorithm_name, &new_results)?;
-                existing_profile.algorithms.insert(algorithm_name, new_algorithm_profile);
+                let new_algorithm_profile =
+                    self.create_algorithm_profile(&algorithm_name, &new_results)?;
+                existing_profile
+                    .algorithms
+                    .insert(algorithm_name, new_algorithm_profile);
             }
         }
 
         existing_profile.updated_at = Utc::now();
 
-        info!("Updated profile with {} algorithms", existing_profile.algorithms.len());
+        info!(
+            "Updated profile with {} algorithms",
+            existing_profile.algorithms.len()
+        );
         Ok(())
     }
 
     /// Update an existing algorithm profile with new results
-    fn update_algorithm_profile(&self, algorithm_profile: &mut AlgorithmProfile, new_results: &[&BenchmarkResult]) -> Result<()> {
+    fn update_algorithm_profile(
+        &self,
+        algorithm_profile: &mut AlgorithmProfile,
+        new_results: &[&BenchmarkResult],
+    ) -> Result<()> {
         // Add new results to the collection
         for result in new_results {
             algorithm_profile.all_results.push((*result).clone());
         }
 
         // Update best result if needed
-        if let Some(best_new_result) = new_results.iter()
-            .max_by(|a, b| a.hashrate_hs.partial_cmp(&b.hashrate_hs).unwrap()) {
+        if let Some(best_new_result) = new_results
+            .iter()
+            .max_by(|a, b| a.hashrate_hs.partial_cmp(&b.hashrate_hs).unwrap())
+        {
             if best_new_result.hashrate_hs > algorithm_profile.best_result.hashrate_hs {
                 algorithm_profile.best_result = (*best_new_result).clone();
             }
@@ -457,7 +489,8 @@ impl ProfileManager {
         algorithm_profile.average_metrics = self.calculate_average_metrics(&all_result_refs)?;
 
         // Update timestamp
-        algorithm_profile.last_benchmarked = new_results.iter()
+        algorithm_profile.last_benchmarked = new_results
+            .iter()
             .map(|r| r.end_time)
             .max()
             .unwrap_or(Utc::now());
@@ -484,7 +517,9 @@ impl ProfileManager {
             self.load_profiles()?
         };
 
-        collection.profiles.insert(profile.device.id.clone(), profile);
+        collection
+            .profiles
+            .insert(profile.device.id.clone(), profile);
         collection.metadata.profile_count = collection.profiles.len() as u32;
         collection.metadata.last_updated = Utc::now();
 
@@ -524,14 +559,18 @@ impl ProfileManager {
         if collection.version > PROFILE_FORMAT_VERSION {
             return Err(anyhow!(
                 "Profile collection version {} is newer than supported version {}",
-                collection.version, PROFILE_FORMAT_VERSION
+                collection.version,
+                PROFILE_FORMAT_VERSION
             ));
         }
 
         // Validate profile count matches actual profiles
         if collection.metadata.profile_count != collection.profiles.len() as u32 {
-            warn!("Profile count mismatch in metadata: expected {}, found {}", 
-                  collection.metadata.profile_count, collection.profiles.len());
+            warn!(
+                "Profile count mismatch in metadata: expected {}, found {}",
+                collection.metadata.profile_count,
+                collection.profiles.len()
+            );
         }
 
         // Validate individual profiles
@@ -539,7 +578,8 @@ impl ProfileManager {
             if profile.device.id != *device_id {
                 return Err(anyhow!(
                     "Profile device ID mismatch: key '{}' vs profile '{}'",
-                    device_id, profile.device.id
+                    device_id,
+                    profile.device.id
                 ));
             }
 
@@ -560,15 +600,16 @@ impl ProfileManager {
             self.load_profiles()?
         };
 
-        let file = File::create(export_path)
-            .context("Failed to create export file")?;
-        
-        let writer = BufWriter::new(file);
-        serde_json::to_writer_pretty(writer, &collection)
-            .context("Failed to write export JSON")?;
+        let file = File::create(export_path).context("Failed to create export file")?;
 
-        info!("Exported {} profiles to: {}", 
-              collection.profiles.len(), export_path.display());
+        let writer = BufWriter::new(file);
+        serde_json::to_writer_pretty(writer, &collection).context("Failed to write export JSON")?;
+
+        info!(
+            "Exported {} profiles to: {}",
+            collection.profiles.len(),
+            export_path.display()
+        );
         Ok(())
     }
 
@@ -576,12 +617,11 @@ impl ProfileManager {
     pub fn import_profiles(&mut self, import_path: &Path) -> Result<u32> {
         info!("Importing profiles from: {}", import_path.display());
 
-        let file = File::open(import_path)
-            .context("Failed to open import file")?;
-        
+        let file = File::open(import_path).context("Failed to open import file")?;
+
         let reader = BufReader::new(file);
-        let imported_collection: ProfileCollection = serde_json::from_reader(reader)
-            .context("Failed to parse import JSON")?;
+        let imported_collection: ProfileCollection =
+            serde_json::from_reader(reader).context("Failed to parse import JSON")?;
 
         // Validate imported collection
         self.validate_collection(&imported_collection)?;
@@ -615,19 +655,20 @@ impl ProfileManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::benchmarking::BenchmarkStatus;
     use tempfile::TempDir;
 
     #[test]
     fn test_profile_creation() -> Result<()> {
         let report = create_test_benchmark_report();
         let manager = create_test_profile_manager()?;
-        
+
         let profile = manager.create_profile_from_benchmark(&report)?;
-        
+
         assert_eq!(profile.device.id, report.device.id);
         assert!(!profile.algorithms.is_empty());
         assert_eq!(profile.version, PROFILE_FORMAT_VERSION);
-        
+
         Ok(())
     }
 
@@ -636,13 +677,13 @@ mod tests {
         let report = create_test_benchmark_report();
         let manager = create_test_profile_manager()?;
         let profile = manager.create_profile_from_benchmark(&report)?;
-        
+
         let serialized = serde_json::to_string(&profile)?;
         let deserialized: DeviceProfile = serde_json::from_str(&serialized)?;
-        
+
         assert_eq!(deserialized.id, profile.id);
         assert_eq!(deserialized.device.id, profile.device.id);
-        
+
         Ok(())
     }
 
@@ -655,7 +696,7 @@ mod tests {
 
     fn create_test_benchmark_report() -> DeviceBenchmarkReport {
         use crate::hardware::*;
-        
+
         let device = MiningDevice {
             id: "test_gpu_0".to_string(),
             name: "Test GPU".to_string(),

@@ -57,7 +57,7 @@ BUNKER MINER detects mining hardware, securely configures and runs vetted third-
 
 ### Level 0: Prototype
 
-Code may be incomplete, mocked, or non-compiling. Documentation may describe intent. This is the current baseline.
+Code may be incomplete, mocked, or non-compiling. Documentation may describe intent. This is the historical prototype state.
 
 ### Level 1: Developer-Usable
 
@@ -65,6 +65,8 @@ Code may be incomplete, mocked, or non-compiling. Documentation may describe int
 - Unit tests cover core pure logic.
 - Local daemon can detect hardware with mocks or real devices.
 - No production claims.
+
+Current status: the enforced Rust workspace has reached Level 1 for the promoted daemon and stubs. The daemon is not yet Level 2 because verified miner binary acquisition, packaged setup, and end-user start-to-telemetry validation are still incomplete.
 
 ### Level 2: Local Miner MVP
 
