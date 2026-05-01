@@ -1,9 +1,9 @@
 /*!
  * BUNKER MINER - Coin Daemon Smart Stub
- * 
+ *
  * Development stub service that implements a cryptocurrency daemon JSON-RPC API
  * with dummy block templates and mining data for local development and testing.
- * 
+ *
  * Features:
  * - JSON-RPC 2.0 compatible API for mining operations
  * - Block template generation with realistic structure
@@ -12,26 +12,19 @@
  * - Health checks and metrics
  */
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::Json,
-    routing::post,
-    Router,
-};
+use axum::{extract::State, http::StatusCode, response::Json, routing::post, Router};
 use chrono::{DateTime, Utc};
 use clap::Parser;
-use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower::ServiceBuilder;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
-use tracing::{info, warn, error, debug};
+use tracing::{debug, info, warn};
 
 #[derive(Parser)]
 #[command(name = "coin-daemon-stub")]
@@ -40,15 +33,15 @@ struct Args {
     /// Bind address
     #[arg(long, default_value = "0.0.0.0:18081")]
     bind: String,
-    
+
     /// Enable debug logging
     #[arg(long)]
     debug: bool,
-    
+
     /// Health check mode
     #[arg(long)]
     health_check: bool,
-    
+
     /// Simulate network difficulty
     #[arg(long, default_value = "300000000000")]
     difficulty: u64,
@@ -154,17 +147,17 @@ impl StubState {
     fn new(difficulty: u64) -> Self {
         let mut rng = StdRng::from_entropy();
         let mut tx_pool = Vec::new();
-        
+
         // Generate some mock transactions
         for i in 0..5 {
             tx_pool.push(Transaction {
                 id: format!("{:064x}", rng.gen::<u64>()),
                 blob_size: 1000 + (i * 200),
                 weight: 1500 + (i * 300),
-                fee: 10000 + (i * 5000),
+                fee: 10000 + (i as u64 * 5000),
             });
         }
-        
+
         Self {
             height: 2800000,
             difficulty,
@@ -175,30 +168,27 @@ impl StubState {
             rng,
         }
     }
-    
+
     fn generate_hash(&mut self) -> String {
         let random_bytes: [u8; 32] = self.rng.gen();
         hex::encode(random_bytes)
     }
-    
+
     fn generate_block_template(&mut self) -> BlockTemplate {
         let prev_hash = self.generate_hash();
         let seed_hash = self.generate_hash();
         let next_seed_hash = self.generate_hash();
-        
+
         // Generate block template blob (simplified)
         let template_data = format!(
             "{}{}{}{}",
-            self.height,
-            prev_hash,
-            seed_hash,
-            self.difficulty
+            self.height, prev_hash, seed_hash, self.difficulty
         );
-        
+
         let mut hasher = Sha256::new();
         hasher.update(template_data.as_bytes());
         let template_hash = hex::encode(hasher.finalize());
-        
+
         BlockTemplate {
             blocktemplate_blob: format!("0x{}", template_hash),
             blockhashing_blob: format!("0x{}", &template_hash[..64]),
@@ -213,7 +203,7 @@ impl StubState {
             untrusted: false,
         }
     }
-    
+
     fn get_network_info(&self) -> NetworkInfo {
         NetworkInfo {
             status: "OK".to_string(),
@@ -249,17 +239,23 @@ async fn handle_jsonrpc(
     State(state): State<AppState>,
     Json(request): Json<JsonRpcRequest>,
 ) -> Result<Json<JsonRpcResponse>, StatusCode> {
-    debug!("📨 JSON-RPC Request: {} - {}", request.method, 
-           serde_json::to_string(&request.params).unwrap_or_default());
-    
+    debug!(
+        "📨 JSON-RPC Request: {} - {}",
+        request.method,
+        serde_json::to_string(&request.params).unwrap_or_default()
+    );
+
     let mut state_lock = state.write().await;
     state_lock.rpc_requests += 1;
-    
+
     let response = match request.method.as_str() {
         "get_block_template" => {
-            info!("🔨 Generating block template for height {}", state_lock.height);
+            info!(
+                "🔨 Generating block template for height {}",
+                state_lock.height
+            );
             let template = state_lock.generate_block_template();
-            
+
             JsonRpcResponse {
                 jsonrpc: "2.0".to_string(),
                 id: request.id,
@@ -267,41 +263,48 @@ async fn handle_jsonrpc(
                 error: None,
             }
         }
-        
+
         "submit_block" => {
-            let block_blob = request.params
+            let block_blob = request
+                .params
                 .as_ref()
                 .and_then(|p| p.as_array())
                 .and_then(|arr| arr.first())
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown");
-            
-            info!("✅ Block submitted: {}", &block_blob[..std::cmp::min(16, block_blob.len())]);
-            
+
+            info!(
+                "✅ Block submitted: {}",
+                &block_blob[..std::cmp::min(16, block_blob.len())]
+            );
+
             state_lock.blocks_submitted += 1;
             state_lock.height += 1;
-            
+
             // Simulate difficulty adjustment
             if state_lock.height % 10 == 0 {
                 let adjustment = 1.0 + (rand::thread_rng().gen::<f64>() - 0.5) * 0.1;
                 state_lock.difficulty = (state_lock.difficulty as f64 * adjustment) as u64;
                 info!("⚖️ Difficulty adjusted to: {}", state_lock.difficulty);
             }
-            
+
             JsonRpcResponse {
                 jsonrpc: "2.0".to_string(),
                 id: request.id,
-                result: Some(serde_json::to_value(SubmitBlockResponse {
-                    status: "OK".to_string(),
-                }).unwrap()),
+                result: Some(
+                    serde_json::to_value(SubmitBlockResponse {
+                        status: "OK".to_string(),
+                    })
+                    .unwrap(),
+                ),
                 error: None,
             }
         }
-        
+
         "get_info" => {
             info!("ℹ️ Network info requested");
             let network_info = state_lock.get_network_info();
-            
+
             JsonRpcResponse {
                 jsonrpc: "2.0".to_string(),
                 id: request.id,
@@ -309,22 +312,20 @@ async fn handle_jsonrpc(
                 error: None,
             }
         }
-        
-        "get_height" => {
-            JsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                id: request.id,
-                result: Some(serde_json::json!({
-                    "height": state_lock.height,
-                    "status": "OK"
-                })),
-                error: None,
-            }
-        }
-        
+
+        "get_height" => JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id: request.id,
+            result: Some(serde_json::json!({
+                "height": state_lock.height,
+                "status": "OK"
+            })),
+            error: None,
+        },
+
         "get_last_block_header" => {
             let block_hash = state_lock.generate_hash();
-            
+
             JsonRpcResponse {
                 jsonrpc: "2.0".to_string(),
                 id: request.id,
@@ -353,43 +354,41 @@ async fn handle_jsonrpc(
                 error: None,
             }
         }
-        
-        "get_connections" => {
-            JsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                id: request.id,
-                result: Some(serde_json::json!({
-                    "connections": [
-                        {
-                            "address": "127.0.0.1:18080",
-                            "avg_download": 5120,
-                            "avg_upload": 1024,
-                            "connection_id": "abc123",
-                            "current_download": 1024,
-                            "current_upload": 512,
-                            "height": state_lock.height,
-                            "host": "127.0.0.1",
-                            "incoming": false,
-                            "ip": "127.0.0.1",
-                            "live_time": 3600,
-                            "local_ip": false,
-                            "localhost": true,
-                            "peer_id": "1234567890abcdef",
-                            "port": "18080",
-                            "recv_count": 1000,
-                            "recv_idle_time": 10,
-                            "send_count": 500,
-                            "send_idle_time": 5,
-                            "state": "normal",
-                            "support_flags": 1
-                        }
-                    ],
-                    "status": "OK"
-                })),
-                error: None,
-            }
-        }
-        
+
+        "get_connections" => JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id: request.id,
+            result: Some(serde_json::json!({
+                "connections": [
+                    {
+                        "address": "127.0.0.1:18080",
+                        "avg_download": 5120,
+                        "avg_upload": 1024,
+                        "connection_id": "abc123",
+                        "current_download": 1024,
+                        "current_upload": 512,
+                        "height": state_lock.height,
+                        "host": "127.0.0.1",
+                        "incoming": false,
+                        "ip": "127.0.0.1",
+                        "live_time": 3600,
+                        "local_ip": false,
+                        "localhost": true,
+                        "peer_id": "1234567890abcdef",
+                        "port": "18080",
+                        "recv_count": 1000,
+                        "recv_idle_time": 10,
+                        "send_count": 500,
+                        "send_idle_time": 5,
+                        "state": "normal",
+                        "support_flags": 1
+                    }
+                ],
+                "status": "OK"
+            })),
+            error: None,
+        },
+
         _ => {
             warn!("❓ Unknown JSON-RPC method: {}", request.method);
             JsonRpcResponse {
@@ -404,17 +403,21 @@ async fn handle_jsonrpc(
             }
         }
     };
-    
-    debug!("📤 JSON-RPC Response: {}", 
-           serde_json::to_string(&response).unwrap_or_default());
-    
+
+    debug!(
+        "📤 JSON-RPC Response: {}",
+        serde_json::to_string(&response).unwrap_or_default()
+    );
+
     Ok(Json(response))
 }
 
-async fn health_check(State(state): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
+async fn health_check(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
     let state_lock = state.read().await;
     let now = Utc::now();
-    
+
     Ok(Json(serde_json::json!({
         "status": "healthy",
         "timestamp": now,
@@ -430,7 +433,7 @@ async fn health_check(State(state): State<AppState>) -> Result<Json<serde_json::
 
 async fn daemon_info(State(state): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
     let state_lock = state.read().await;
-    
+
     Ok(Json(serde_json::json!({
         "daemon_info": {
             "name": "BUNKER MINER Coin Daemon Stub",
@@ -438,7 +441,7 @@ async fn daemon_info(State(state): State<AppState>) -> Result<Json<serde_json::V
             "description": "Development stub for cryptocurrency daemon",
             "supported_methods": [
                 "get_block_template",
-                "submit_block", 
+                "submit_block",
                 "get_info",
                 "get_height",
                 "get_last_block_header",
@@ -462,19 +465,16 @@ fn create_app(state: AppState) -> Router {
     Router::new()
         // JSON-RPC endpoint (main daemon API)
         .route("/json_rpc", post(handle_jsonrpc))
-        
         // Health and info endpoints
         .route("/health", axum::routing::get(health_check))
         .route("/info", axum::routing::get(daemon_info))
-        
         // Root endpoint with daemon info
         .route("/", axum::routing::get(daemon_info))
-        
         .with_state(state)
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
-                .layer(CorsLayer::permissive())
+                .layer(CorsLayer::permissive()),
         )
 }
 
@@ -513,7 +513,7 @@ async fn main() -> anyhow::Result<()> {
     // Create and bind server
     let app = create_app(state);
     let addr: SocketAddr = args.bind.parse()?;
-    
+
     info!("🚀 Coin Daemon Stub listening on http://{}", addr);
     info!("📋 Available endpoints:");
     info!("  POST /json_rpc              - Main JSON-RPC endpoint");
@@ -542,7 +542,7 @@ mod tests {
     #[tokio::test]
     async fn test_stub_state_initialization() {
         let state = StubState::new(300000000000);
-        
+
         assert_eq!(state.height, 2800000);
         assert_eq!(state.difficulty, 300000000000);
         assert!(!state.tx_pool.is_empty());
@@ -554,7 +554,7 @@ mod tests {
     fn test_block_template_generation() {
         let mut state = StubState::new(300000000000);
         let template = state.generate_block_template();
-        
+
         assert_eq!(template.height, 2800000);
         assert_eq!(template.difficulty, 300000000000);
         assert_eq!(template.status, "OK");
@@ -566,7 +566,7 @@ mod tests {
     async fn test_health_check() {
         let state = Arc::new(RwLock::new(StubState::new(300000000000)));
         let result = health_check(State(state)).await;
-        
+
         assert!(result.is_ok());
         let response = result.unwrap().0;
         assert_eq!(response["status"], "healthy");

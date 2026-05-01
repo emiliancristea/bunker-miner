@@ -1,9 +1,9 @@
 /*!
  * BUNKER MINER - Fleet Controller Smart Stub
- * 
+ *
  * Development stub service that implements the future Fleet Controller WebSocket API
  * with acknowledgment of connections and telemetry logging for local development and testing.
- * 
+ *
  * Features:
  * - WebSocket server for fleet management connections
  * - Connection acknowledgment and session tracking
@@ -17,12 +17,12 @@ use axum::{
     extract::State,
     http::StatusCode,
     response::{Html, IntoResponse, Json},
-    routing::{get, post},
+    routing::get,
     Router,
 };
 use chrono::{DateTime, Utc};
 use clap::Parser;
-use futures_util::{sink::SinkExt, stream::StreamExt};
+use futures_util::stream::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -30,7 +30,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower::ServiceBuilder;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
-use tracing::{info, warn, error, debug};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 #[derive(Parser)]
@@ -40,15 +40,15 @@ struct Args {
     /// WebSocket bind address
     #[arg(long, default_value = "0.0.0.0:8081")]
     ws_bind: String,
-    
+
     /// HTTP bind address for health checks
     #[arg(long, default_value = "0.0.0.0:8082")]
     http_bind: String,
-    
+
     /// Enable debug logging
     #[arg(long)]
     debug: bool,
-    
+
     /// Health check mode
     #[arg(long)]
     health_check: bool,
@@ -121,29 +121,18 @@ pub enum WebSocketMessage {
         timestamp: DateTime<Utc>,
     },
     #[serde(rename = "disconnect")]
-    Disconnect {
-        miner_id: String,
-        reason: String,
-    },
+    Disconnect { miner_id: String, reason: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum WebSocketResponse {
     #[serde(rename = "ack")]
-    Acknowledgment {
-        session_id: String,
-        message: String,
-    },
+    Acknowledgment { session_id: String, message: String },
     #[serde(rename = "error")]
-    Error {
-        code: u32,
-        message: String,
-    },
+    Error { code: u32, message: String },
     #[serde(rename = "pong")]
-    Pong {
-        timestamp: DateTime<Utc>,
-    },
+    Pong { timestamp: DateTime<Utc> },
 }
 
 type AppState = Arc<RwLock<StubState>>;
@@ -178,14 +167,17 @@ async fn websocket_handler(
 
 async fn handle_websocket(mut socket: WebSocket, state: AppState) {
     let session_id = Uuid::new_v4().to_string();
-    info!("🔌 WebSocket connection established - Session: {}", session_id);
-    
+    info!(
+        "🔌 WebSocket connection established - Session: {}",
+        session_id
+    );
+
     // Send welcome message
     let welcome = WebSocketResponse::Acknowledgment {
         session_id: session_id.clone(),
         message: "Connected to BUNKER MINER Fleet Controller".to_string(),
     };
-    
+
     if let Ok(welcome_msg) = serde_json::to_string(&welcome) {
         if socket.send(Message::Text(welcome_msg)).await.is_err() {
             warn!("Failed to send welcome message to session {}", session_id);
@@ -200,11 +192,17 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
         match msg_result {
             Ok(Message::Text(text)) => {
                 debug!("📨 Received message: {}", text);
-                
+
                 match serde_json::from_str::<WebSocketMessage>(&text) {
                     Ok(ws_msg) => {
-                        let response = handle_websocket_message(ws_msg, &session_id, &state, &mut current_miner_id).await;
-                        
+                        let response = handle_websocket_message(
+                            ws_msg,
+                            &session_id,
+                            &state,
+                            &mut current_miner_id,
+                        )
+                        .await;
+
                         if let Ok(response_text) = serde_json::to_string(&response) {
                             if socket.send(Message::Text(response_text)).await.is_err() {
                                 warn!("Failed to send response to session {}", session_id);
@@ -218,7 +216,7 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
                             code: 400,
                             message: format!("Invalid message format: {}", e),
                         };
-                        
+
                         if let Ok(error_text) = serde_json::to_string(&error_response) {
                             let _ = socket.send(Message::Text(error_text)).await;
                         }
@@ -231,7 +229,7 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
                     code: 415,
                     message: "Binary messages not supported".to_string(),
                 };
-                
+
                 if let Ok(error_text) = serde_json::to_string(&error_response) {
                     let _ = socket.send(Message::Text(error_text)).await;
                 }
@@ -260,7 +258,10 @@ async fn handle_websocket(mut socket: WebSocket, state: AppState) {
     if let Some(miner_id) = current_miner_id {
         let mut state_lock = state.write().await;
         state_lock.connections.remove(&session_id);
-        info!("🧹 Cleaned up session {} for miner {}", session_id, miner_id);
+        info!(
+            "🧹 Cleaned up session {} for miner {}",
+            session_id, miner_id
+        );
     }
 
     info!("🔌 WebSocket connection closed: {}", session_id);
@@ -273,12 +274,18 @@ async fn handle_websocket_message(
     current_miner_id: &mut Option<String>,
 ) -> WebSocketResponse {
     match message {
-        WebSocketMessage::Connect { miner_id, client_info } => {
-            info!("🔗 Miner {} connecting with session {}", miner_id, session_id);
-            
+        WebSocketMessage::Connect {
+            miner_id,
+            client_info,
+        } => {
+            info!(
+                "🔗 Miner {} connecting with session {}",
+                miner_id, session_id
+            );
+
             let mut state_lock = state.write().await;
             let now = Utc::now();
-            
+
             let connection = FleetConnection {
                 session_id: session_id.to_string(),
                 miner_id: miner_id.clone(),
@@ -288,60 +295,68 @@ async fn handle_websocket_message(
                 status: "connected".to_string(),
                 client_info,
             };
-            
-            state_lock.connections.insert(session_id.to_string(), connection);
+
+            state_lock
+                .connections
+                .insert(session_id.to_string(), connection);
             state_lock.total_sessions += 1;
             *current_miner_id = Some(miner_id.clone());
-            
+
             WebSocketResponse::Acknowledgment {
                 session_id: session_id.to_string(),
                 message: format!("Miner {} successfully connected", miner_id),
             }
         }
-        
+
         WebSocketMessage::Telemetry { miner_id, data } => {
             debug!("📊 Telemetry from {}: {:?}", miner_id, data);
-            
+
             let mut state_lock = state.write().await;
             if let Some(connection) = state_lock.connections.get_mut(session_id) {
                 connection.last_seen = Utc::now();
                 connection.telemetry_messages_received += 1;
                 state_lock.total_telemetry_received += 1;
             }
-            
+
             // Log telemetry for development purposes
-            info!("📊 Telemetry logged for miner {}: {} fields", miner_id, 
-                  data.as_object().map(|o| o.len()).unwrap_or(0));
-            
+            info!(
+                "📊 Telemetry logged for miner {}: {} fields",
+                miner_id,
+                data.as_object().map(|o| o.len()).unwrap_or(0)
+            );
+
             WebSocketResponse::Acknowledgment {
                 session_id: session_id.to_string(),
                 message: "Telemetry received and logged".to_string(),
             }
         }
-        
-        WebSocketMessage::Heartbeat { miner_id, timestamp: _ } => {
+
+        WebSocketMessage::Heartbeat {
+            miner_id,
+            timestamp: _,
+        } => {
             debug!("💓 Heartbeat from {}", miner_id);
-            
+
             let mut state_lock = state.write().await;
             if let Some(connection) = state_lock.connections.get_mut(session_id) {
                 connection.last_seen = Utc::now();
                 connection.status = "active".to_string();
             }
-            
+
             WebSocketResponse::Pong {
                 timestamp: Utc::now(),
             }
         }
-        
+
         WebSocketMessage::Disconnect { miner_id, reason } => {
             info!("👋 Miner {} disconnecting: {}", miner_id, reason);
-            
+
             let mut state_lock = state.write().await;
             if let Some(connection) = state_lock.connections.get_mut(session_id) {
                 connection.status = "disconnected".to_string();
                 connection.last_seen = Utc::now();
             }
-            
+
             WebSocketResponse::Acknowledgment {
                 session_id: session_id.to_string(),
                 message: format!("Disconnect acknowledged for {}", miner_id),
@@ -354,24 +369,30 @@ async fn handle_websocket_message(
 async fn get_fleet_stats(State(state): State<AppState>) -> Result<Json<FleetStats>, StatusCode> {
     let state_lock = state.read().await;
     let now = Utc::now();
-    
+
     let stats = FleetStats {
         connected_miners: state_lock.connections.len() as u32,
         total_sessions: state_lock.total_sessions,
-        active_sessions: state_lock.connections.values()
+        active_sessions: state_lock
+            .connections
+            .values()
             .filter(|c| c.status == "connected" || c.status == "active")
             .count() as u32,
         total_telemetry_received: state_lock.total_telemetry_received,
-        last_connection: state_lock.connections.values()
+        last_connection: state_lock
+            .connections
+            .values()
             .map(|c| c.connected_at)
             .max(),
         uptime_seconds: (now - state_lock.start_time).num_seconds() as u64,
     };
-    
+
     Ok(Json(stats))
 }
 
-async fn get_connections(State(state): State<AppState>) -> Result<Json<Vec<FleetConnection>>, StatusCode> {
+async fn get_connections(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<FleetConnection>>, StatusCode> {
     let state_lock = state.read().await;
     let connections: Vec<FleetConnection> = state_lock.connections.values().cloned().collect();
     Ok(Json(connections))
@@ -380,10 +401,10 @@ async fn get_connections(State(state): State<AppState>) -> Result<Json<Vec<Fleet
 async fn health_check(State(state): State<AppState>) -> Result<Json<HealthStatus>, StatusCode> {
     let state_lock = state.read().await;
     let now = Utc::now();
-    
+
     // Simple memory usage estimation
     let memory_usage = (state_lock.connections.len() * 1024) as u64; // Rough estimate
-    
+
     Ok(Json(HealthStatus {
         status: "healthy".to_string(),
         timestamp: now,
@@ -396,7 +417,8 @@ async fn health_check(State(state): State<AppState>) -> Result<Json<HealthStatus
 }
 
 async fn websocket_info() -> Html<&'static str> {
-    Html(r#"
+    Html(
+        r#"
 <!DOCTYPE html>
 <html>
 <head>
@@ -430,7 +452,8 @@ async fn websocket_info() -> Html<&'static str> {
     </div>
 </body>
 </html>
-    "#)
+    "#,
+    )
 }
 
 fn create_ws_app(state: AppState) -> Router {
@@ -441,7 +464,7 @@ fn create_ws_app(state: AppState) -> Router {
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
-                .layer(CorsLayer::permissive())
+                .layer(CorsLayer::permissive()),
         )
 }
 
@@ -450,16 +473,14 @@ fn create_http_app(state: AppState) -> Router {
         // Fleet management endpoints
         .route("/api/v1/fleet/stats", get(get_fleet_stats))
         .route("/api/v1/fleet/connections", get(get_connections))
-        
         // Health and monitoring
         .route("/health", get(health_check))
         .route("/api/v1/health", get(health_check))
-        
         .with_state(state)
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
-                .layer(CorsLayer::permissive())
+                .layer(CorsLayer::permissive()),
         )
 }
 
@@ -475,7 +496,10 @@ async fn main() -> anyhow::Result<()> {
     // Initialize logging
     let log_level = if args.debug { "debug" } else { "info" };
     tracing_subscriber::fmt()
-        .with_env_filter(format!("fleet_controller_stub={},tower_http=debug", log_level))
+        .with_env_filter(format!(
+            "fleet_controller_stub={},tower_http=debug",
+            log_level
+        ))
         .init();
 
     info!("🚀 Starting BUNKER MINER Fleet Controller Stub");
@@ -522,7 +546,7 @@ mod tests {
     #[tokio::test]
     async fn test_stub_state_initialization() {
         let state = StubState::default();
-        
+
         assert!(state.connections.is_empty());
         assert_eq!(state.total_sessions, 0);
         assert_eq!(state.total_telemetry_received, 0);
@@ -532,7 +556,7 @@ mod tests {
     async fn test_health_check() {
         let state = Arc::new(RwLock::new(StubState::default()));
         let result = health_check(State(state)).await;
-        
+
         assert!(result.is_ok());
         let health = result.unwrap().0;
         assert_eq!(health.status, "healthy");

@@ -15,7 +15,7 @@ tokio-tungstenite = "0.20"
 tungstenite = "0.20"
 
 # HTTP server for health checks
-axum = "0.7"
+axum = { version = "0.7", features = ["ws"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 

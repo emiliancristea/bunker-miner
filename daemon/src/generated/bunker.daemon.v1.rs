@@ -429,6 +429,220 @@ pub struct MiningConfig {
         ::prost::alloc::string::String,
     >,
 }
+/// Overclocking profile for hardware optimization
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct OverclockProfile {
+    /// Algorithm this profile applies to
+    /// Validated: Must be non-empty, max 32 characters
+    #[prost(string, tag = "1")]
+    pub algorithm: ::prost::alloc::string::String,
+    /// Core clock offset in MHz (can be negative for underclocking)
+    /// Validated: >= -500, <= 500
+    #[prost(int32, tag = "2")]
+    pub core_clock_offset: i32,
+    /// Memory clock offset in MHz (can be negative)
+    /// Validated: >= -1000, <= 1000
+    #[prost(int32, tag = "3")]
+    pub memory_clock_offset: i32,
+    /// Power limit in watts (0 means use default)
+    /// Validated: >= 50, <= 500, 0 = default
+    #[prost(uint32, tag = "4")]
+    pub power_limit_watts: u32,
+    /// Temperature limit in Celsius (0 means use default)
+    /// Validated: >= 60, <= 95, 0 = default
+    #[prost(uint32, tag = "5")]
+    pub temperature_limit_c: u32,
+    /// Fan speed percentage (0 means auto)
+    /// Validated: >= 0, <= 100, 0 = auto
+    #[prost(uint32, tag = "6")]
+    pub fan_speed_percent: u32,
+    /// Whether this profile is enabled
+    #[prost(bool, tag = "7")]
+    pub enabled: bool,
+    /// User-defined name for this profile
+    /// Validated: Must be non-empty, max 64 characters
+    #[prost(string, tag = "8")]
+    pub name: ::prost::alloc::string::String,
+}
+/// Hardware defaults captured before any overclocking
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct HardwareDefaults {
+    /// Device identifier
+    #[prost(string, tag = "1")]
+    pub device_id: ::prost::alloc::string::String,
+    /// Default core clock in MHz
+    #[prost(uint32, tag = "2")]
+    pub core_clock_mhz: u32,
+    /// Default memory clock in MHz
+    #[prost(uint32, tag = "3")]
+    pub memory_clock_mhz: u32,
+    /// Default power limit in watts
+    #[prost(uint32, tag = "4")]
+    pub power_limit_watts: u32,
+    /// Default temperature limit in Celsius
+    #[prost(uint32, tag = "5")]
+    pub temperature_limit_c: u32,
+    /// Default fan speed percentage
+    #[prost(uint32, tag = "6")]
+    pub fan_speed_percent: u32,
+}
+/// Current overclocking state for a device
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct OverclockState {
+    /// Device identifier
+    #[prost(string, tag = "1")]
+    pub device_id: ::prost::alloc::string::String,
+    /// Currently applied profile (if any)
+    #[prost(message, optional, tag = "2")]
+    pub applied_profile: ::core::option::Option<OverclockProfile>,
+    /// Hardware defaults for this device
+    #[prost(message, optional, tag = "3")]
+    pub defaults: ::core::option::Option<HardwareDefaults>,
+    /// Whether device is currently overclocked
+    #[prost(bool, tag = "4")]
+    pub is_overclocked: bool,
+    /// When profile was last applied
+    #[prost(message, optional, tag = "5")]
+    pub last_applied: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(enumeration = "overclock_state::SafetyStatus", tag = "6")]
+    pub safety_status: i32,
+}
+/// Nested message and enum types in `OverclockState`.
+pub mod overclock_state {
+    /// Current safety status
+    #[derive(serde::Serialize, serde::Deserialize)]
+    #[derive(
+        Clone,
+        Copy,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash,
+        PartialOrd,
+        Ord,
+        ::prost::Enumeration
+    )]
+    #[repr(i32)]
+    pub enum SafetyStatus {
+        Unknown = 0,
+        Safe = 1,
+        Warning = 2,
+        Critical = 3,
+    }
+    impl SafetyStatus {
+        /// String value of the enum field names used in the ProtoBuf definition.
+        ///
+        /// The values are not transformed in any way and thus are considered stable
+        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+        pub fn as_str_name(&self) -> &'static str {
+            match self {
+                SafetyStatus::Unknown => "SAFETY_STATUS_UNKNOWN",
+                SafetyStatus::Safe => "SAFETY_STATUS_SAFE",
+                SafetyStatus::Warning => "SAFETY_STATUS_WARNING",
+                SafetyStatus::Critical => "SAFETY_STATUS_CRITICAL",
+            }
+        }
+        /// Creates an enum from field names used in the ProtoBuf definition.
+        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+            match value {
+                "SAFETY_STATUS_UNKNOWN" => Some(Self::Unknown),
+                "SAFETY_STATUS_SAFE" => Some(Self::Safe),
+                "SAFETY_STATUS_WARNING" => Some(Self::Warning),
+                "SAFETY_STATUS_CRITICAL" => Some(Self::Critical),
+                _ => None,
+            }
+        }
+    }
+}
+/// Request to list available overclocking profiles
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListOverclockProfilesRequest {
+    /// Optional algorithm filter
+    #[prost(string, tag = "1")]
+    pub algorithm_filter: ::prost::alloc::string::String,
+}
+/// Response with overclocking profiles
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListOverclockProfilesResponse {
+    /// Available overclocking profiles
+    #[prost(message, repeated, tag = "1")]
+    pub profiles: ::prost::alloc::vec::Vec<OverclockProfile>,
+    /// Whether expert mode is enabled
+    #[prost(bool, tag = "2")]
+    pub expert_mode_enabled: bool,
+    #[prost(message, optional, tag = "3")]
+    pub safety_settings: ::core::option::Option<
+        list_overclock_profiles_response::SafetySettings,
+    >,
+    /// Response timestamp
+    #[prost(message, optional, tag = "4")]
+    pub timestamp: ::core::option::Option<::prost_types::Timestamp>,
+}
+/// Nested message and enum types in `ListOverclockProfilesResponse`.
+pub mod list_overclock_profiles_response {
+    /// Safety settings
+    #[derive(serde::Serialize, serde::Deserialize)]
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Message)]
+    pub struct SafetySettings {
+        #[prost(int32, tag = "1")]
+        pub max_core_clock_offset_mhz: i32,
+        #[prost(int32, tag = "2")]
+        pub max_memory_clock_offset_mhz: i32,
+        #[prost(uint32, tag = "3")]
+        pub max_power_limit_watts: u32,
+        #[prost(uint32, tag = "4")]
+        pub max_temperature_limit_c: u32,
+        #[prost(uint32, tag = "5")]
+        pub emergency_temperature_c: u32,
+    }
+}
+/// Request to apply overclocking profile
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ApplyOverclockProfileRequest {
+    /// Device ID to apply profile to
+    #[prost(string, tag = "1")]
+    pub device_id: ::prost::alloc::string::String,
+    /// Algorithm to apply profile for
+    #[prost(string, tag = "2")]
+    pub algorithm: ::prost::alloc::string::String,
+    /// Optional custom profile (overrides stored profile)
+    #[prost(message, optional, tag = "3")]
+    pub custom_profile: ::core::option::Option<OverclockProfile>,
+}
+/// Request to revert device to defaults
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RevertOverclockRequest {
+    /// Device IDs to revert (empty = all devices)
+    #[prost(string, repeated, tag = "1")]
+    pub device_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Whether to force revert (emergency)
+    #[prost(bool, tag = "2")]
+    pub force_revert: bool,
+}
+/// Request to get hardware defaults
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetHardwareDefaultsRequest {
+    /// Device ID to get defaults for
+    #[prost(string, tag = "1")]
+    pub device_id: ::prost::alloc::string::String,
+}
 /// Response for system information requests
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -1082,6 +1296,161 @@ pub mod bunker_miner_daemon_client {
                 );
             self.inner.unary(req, path, codec).await
         }
+        /// List available overclocking profiles
+        pub async fn list_overclock_profiles(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ListOverclockProfilesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListOverclockProfilesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/bunker.daemon.v1.BunkerMinerDaemon/ListOverclockProfiles",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "bunker.daemon.v1.BunkerMinerDaemon",
+                        "ListOverclockProfiles",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        /// Apply overclocking profile to device
+        pub async fn apply_overclock_profile(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ApplyOverclockProfileRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CommandResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/bunker.daemon.v1.BunkerMinerDaemon/ApplyOverclockProfile",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "bunker.daemon.v1.BunkerMinerDaemon",
+                        "ApplyOverclockProfile",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        /// Revert device(s) to default hardware settings
+        pub async fn revert_overclock(
+            &mut self,
+            request: impl tonic::IntoRequest<super::RevertOverclockRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CommandResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/bunker.daemon.v1.BunkerMinerDaemon/RevertOverclock",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "bunker.daemon.v1.BunkerMinerDaemon",
+                        "RevertOverclock",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        /// Get hardware default settings for device
+        pub async fn get_hardware_defaults(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetHardwareDefaultsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::HardwareDefaults>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/bunker.daemon.v1.BunkerMinerDaemon/GetHardwareDefaults",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "bunker.daemon.v1.BunkerMinerDaemon",
+                        "GetHardwareDefaults",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        /// Get current overclocking states for all devices
+        pub async fn get_overclock_states(
+            &mut self,
+            request: impl tonic::IntoRequest<()>,
+        ) -> std::result::Result<
+            tonic::Response<tonic::codec::Streaming<super::OverclockState>>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/bunker.daemon.v1.BunkerMinerDaemon/GetOverclockStates",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "bunker.daemon.v1.BunkerMinerDaemon",
+                        "GetOverclockStates",
+                    ),
+                );
+            self.inner.server_streaming(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -1153,6 +1522,46 @@ pub mod bunker_miner_daemon_server {
             request: tonic::Request<super::SetConfigRequest>,
         ) -> std::result::Result<
             tonic::Response<super::SetConfigResponse>,
+            tonic::Status,
+        >;
+        /// List available overclocking profiles
+        async fn list_overclock_profiles(
+            &self,
+            request: tonic::Request<super::ListOverclockProfilesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListOverclockProfilesResponse>,
+            tonic::Status,
+        >;
+        /// Apply overclocking profile to device
+        async fn apply_overclock_profile(
+            &self,
+            request: tonic::Request<super::ApplyOverclockProfileRequest>,
+        ) -> std::result::Result<tonic::Response<super::CommandResponse>, tonic::Status>;
+        /// Revert device(s) to default hardware settings
+        async fn revert_overclock(
+            &self,
+            request: tonic::Request<super::RevertOverclockRequest>,
+        ) -> std::result::Result<tonic::Response<super::CommandResponse>, tonic::Status>;
+        /// Get hardware default settings for device
+        async fn get_hardware_defaults(
+            &self,
+            request: tonic::Request<super::GetHardwareDefaultsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::HardwareDefaults>,
+            tonic::Status,
+        >;
+        /// Server streaming response type for the GetOverclockStates method.
+        type GetOverclockStatesStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<super::OverclockState, tonic::Status>,
+            >
+            + Send
+            + 'static;
+        /// Get current overclocking states for all devices
+        async fn get_overclock_states(
+            &self,
+            request: tonic::Request<()>,
+        ) -> std::result::Result<
+            tonic::Response<Self::GetOverclockStatesStream>,
             tonic::Status,
         >;
     }
@@ -1587,6 +1996,249 @@ pub mod bunker_miner_daemon_server {
                                 max_encoding_message_size,
                             );
                         let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/bunker.daemon.v1.BunkerMinerDaemon/ListOverclockProfiles" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListOverclockProfilesSvc<T: BunkerMinerDaemon>(pub Arc<T>);
+                    impl<
+                        T: BunkerMinerDaemon,
+                    > tonic::server::UnaryService<super::ListOverclockProfilesRequest>
+                    for ListOverclockProfilesSvc<T> {
+                        type Response = super::ListOverclockProfilesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ListOverclockProfilesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as BunkerMinerDaemon>::list_overclock_profiles(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = ListOverclockProfilesSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/bunker.daemon.v1.BunkerMinerDaemon/ApplyOverclockProfile" => {
+                    #[allow(non_camel_case_types)]
+                    struct ApplyOverclockProfileSvc<T: BunkerMinerDaemon>(pub Arc<T>);
+                    impl<
+                        T: BunkerMinerDaemon,
+                    > tonic::server::UnaryService<super::ApplyOverclockProfileRequest>
+                    for ApplyOverclockProfileSvc<T> {
+                        type Response = super::CommandResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ApplyOverclockProfileRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as BunkerMinerDaemon>::apply_overclock_profile(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = ApplyOverclockProfileSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/bunker.daemon.v1.BunkerMinerDaemon/RevertOverclock" => {
+                    #[allow(non_camel_case_types)]
+                    struct RevertOverclockSvc<T: BunkerMinerDaemon>(pub Arc<T>);
+                    impl<
+                        T: BunkerMinerDaemon,
+                    > tonic::server::UnaryService<super::RevertOverclockRequest>
+                    for RevertOverclockSvc<T> {
+                        type Response = super::CommandResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::RevertOverclockRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as BunkerMinerDaemon>::revert_overclock(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = RevertOverclockSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/bunker.daemon.v1.BunkerMinerDaemon/GetHardwareDefaults" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetHardwareDefaultsSvc<T: BunkerMinerDaemon>(pub Arc<T>);
+                    impl<
+                        T: BunkerMinerDaemon,
+                    > tonic::server::UnaryService<super::GetHardwareDefaultsRequest>
+                    for GetHardwareDefaultsSvc<T> {
+                        type Response = super::HardwareDefaults;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetHardwareDefaultsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as BunkerMinerDaemon>::get_hardware_defaults(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = GetHardwareDefaultsSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/bunker.daemon.v1.BunkerMinerDaemon/GetOverclockStates" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetOverclockStatesSvc<T: BunkerMinerDaemon>(pub Arc<T>);
+                    impl<T: BunkerMinerDaemon> tonic::server::ServerStreamingService<()>
+                    for GetOverclockStatesSvc<T> {
+                        type Response = super::OverclockState;
+                        type ResponseStream = T::GetOverclockStatesStream;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::ResponseStream>,
+                            tonic::Status,
+                        >;
+                        fn call(&mut self, request: tonic::Request<()>) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as BunkerMinerDaemon>::get_overclock_states(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = GetOverclockStatesSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.server_streaming(method, req).await;
                         Ok(res)
                     };
                     Box::pin(fut)

@@ -48,6 +48,7 @@ jobs:
               - 'daemon/**'
               - 'libs/common-rust/**'
               - 'tools/poc/**'
+              - 'infra/stubs/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
             client:
@@ -82,7 +83,7 @@ jobs:
           done
           
           # Check required files exist
-          required_files=("README.md" "Cargo.toml" "Makefile" ".gitignore")
+          required_files=("README.md" "Cargo.toml" "docs/PRODUCT_SPEC.md" ".gitignore")
           for file in "${required_files[@]}"; do
             if [[ ! -f "$file" ]]; then
               echo "❌ Missing required file: $file"

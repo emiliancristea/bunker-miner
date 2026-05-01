@@ -1,11 +1,9 @@
 //! BUNKER MINER Common Library
-//! 
+//!
 //! Shared types, utilities, and constants used across BUNKER MINER components.
 
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use uuid::Uuid;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 /// Mining algorithms supported by BUNKER MINER
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -62,7 +60,7 @@ pub struct Telemetry {
 }
 
 /// Share statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ShareStats {
     pub accepted: u64,
     pub rejected: u64,
@@ -94,16 +92,16 @@ pub struct MiningConfig {
 pub enum BunkerError {
     #[error("Hardware detection failed: {0}")]
     HardwareDetection(String),
-    
+
     #[error("Configuration error: {0}")]
     Configuration(String),
-    
+
     #[error("Mining process error: {0}")]
     MiningProcess(String),
-    
+
     #[error("Network error: {0}")]
     Network(String),
-    
+
     #[error("Security error: {0}")]
     Security(String),
 }
@@ -115,34 +113,24 @@ pub type BunkerResult<T> = Result<T, BunkerError>;
 pub mod constants {
     /// Default gRPC port for daemon API
     pub const DEFAULT_GRPC_PORT: u16 = 50051;
-    
+
     /// Default web dashboard port
     pub const DEFAULT_WEB_PORT: u16 = 8080;
-    
+
     /// Configuration file name
     pub const CONFIG_FILE: &str = "config.toml";
-    
+
     /// Profiles file name
     pub const PROFILES_FILE: &str = "profiles.json";
-    
+
     /// Maximum number of concurrent mining processes
     pub const MAX_MINING_PROCESSES: usize = 16;
-    
+
     /// Default profit switching threshold (5%)
     pub const DEFAULT_PROFIT_THRESHOLD: f64 = 0.05;
-    
+
     /// Default minimum dwell time (5 minutes)
     pub const DEFAULT_MIN_DWELL_TIME_SECS: u64 = 300;
-}
-
-impl Default for ShareStats {
-    fn default() -> Self {
-        Self {
-            accepted: 0,
-            rejected: 0,
-            stale: 0,
-        }
-    }
 }
 
 impl DeviceInfo {
@@ -186,7 +174,7 @@ mod tests {
             "RTX 4090".to_string(),
             HardwareType::NvidiaGpu,
         );
-        
+
         assert_eq!(device.device_id, "gpu0");
         assert_eq!(device.name, "RTX 4090");
         assert_eq!(device.hardware_type, HardwareType::NvidiaGpu);
@@ -195,7 +183,7 @@ mod tests {
     #[test]
     fn test_telemetry_creation() {
         let telemetry = Telemetry::new("gpu0".to_string(), Algorithm::Kaspa);
-        
+
         assert_eq!(telemetry.device_id, "gpu0");
         assert_eq!(telemetry.algorithm, Algorithm::Kaspa);
         assert_eq!(telemetry.hashrate_mhs, 0.0);
@@ -206,7 +194,7 @@ mod tests {
         let algorithm = Algorithm::Kaspa;
         let serialized = serde_json::to_string(&algorithm).unwrap();
         let deserialized: Algorithm = serde_json::from_str(&serialized).unwrap();
-        
+
         assert_eq!(algorithm, deserialized);
     }
 }

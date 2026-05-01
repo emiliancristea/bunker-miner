@@ -6,6 +6,8 @@
 [![License](https://img.shields.io/badge/license-MIT-blue)](#license)
 [![Development Status](https://img.shields.io/badge/status-active%20development-orange)](#development-status)
 
+> Canonical product target: [docs/PRODUCT_SPEC.md](docs/PRODUCT_SPEC.md). Current repository maturity is prototype until the product gates in that spec pass. Current enforced build scope is tracked in [docs/BUILD_BASELINE.md](docs/BUILD_BASELINE.md).
+
 ## 🎯 Overview
 
 BUNKER MINER is a comprehensive mining management ecosystem designed for both individual miners and enterprise mining operations. It provides secure, automated management of cryptocurrency mining hardware with real-time optimization, fleet monitoring, and profit maximization capabilities.

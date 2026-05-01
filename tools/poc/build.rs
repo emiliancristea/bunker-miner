@@ -1,6 +1,10 @@
+use std::env;
 use std::error::Error;
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let protoc = protoc_bin_vendored::protoc_bin_path()?;
+    env::set_var("PROTOC", protoc);
+
     // Compile Protocol Buffer definitions
     tonic_build::configure()
         .build_server(true)

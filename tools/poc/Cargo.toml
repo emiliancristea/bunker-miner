@@ -68,4 +68,5 @@ clap = { version = "4.0", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 [build-dependencies]
+protoc-bin-vendored = "3"
 tonic-build = "0.10"

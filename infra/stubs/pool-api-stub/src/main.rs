@@ -1,9 +1,9 @@
 /*!
  * BUNKER MINER - Pool API Smart Stub
- * 
+ *
  * Development stub service that implements the future BUNKER POOL API
  * with hardcoded, schema-valid data for local development and testing.
- * 
+ *
  * Features:
  * - REST API endpoints for pool statistics and miner management
  * - Realistic mock data for development and testing
@@ -12,7 +12,7 @@
  */
 
 use axum::{
-    extract::{Path, Query},
+    extract::{Path, State},
     http::StatusCode,
     response::Json,
     routing::{get, post},
@@ -24,10 +24,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use sysinfo::SystemExt;
 use tokio::sync::RwLock;
 use tower::ServiceBuilder;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
-use tracing::{info, warn};
+use tracing::info;
 use uuid::Uuid;
 
 #[derive(Parser)]
@@ -37,11 +38,11 @@ struct Args {
     /// Bind address
     #[arg(long, default_value = "0.0.0.0:8080")]
     bind: String,
-    
+
     /// Enable debug logging
     #[arg(long)]
     debug: bool,
-    
+
     /// Health check mode
     #[arg(long)]
     health_check: bool,
@@ -119,44 +120,62 @@ struct StubState {
 impl Default for StubState {
     fn default() -> Self {
         let now = Utc::now();
-        
+
         // Generate mock miners
         let mut miners = HashMap::new();
-        let miner_names = vec!["alice_miner", "bob_farm", "crypto_enthusiast", "mining_rig_01"];
-        
+        let miner_names = [
+            "alice_miner",
+            "bob_farm",
+            "crypto_enthusiast",
+            "mining_rig_01",
+        ];
+
         for (i, name) in miner_names.iter().enumerate() {
             let miner_id = format!("miner_{:04}", i + 1);
-            miners.insert(miner_id.clone(), MinerStats {
-                miner_id: miner_id.clone(),
-                worker_name: name.to_string(),
-                hashrate_hs: 1000.0 + (i as f64 * 500.0),
-                shares_submitted: 1000 + (i as u64 * 250),
-                shares_accepted: 950 + (i as u64 * 240),
-                last_seen: now - chrono::Duration::minutes(i as i64 * 2),
-                connected_since: now - chrono::Duration::hours(i as i64 + 1),
-                status: if i == 0 { "mining" } else if i == 1 { "connected" } else { "idle" }.to_string(),
-                difficulty: 1000.0 * (i as f64 + 1.0),
-            });
+            miners.insert(
+                miner_id.clone(),
+                MinerStats {
+                    miner_id: miner_id.clone(),
+                    worker_name: name.to_string(),
+                    hashrate_hs: 1000.0 + (i as f64 * 500.0),
+                    shares_submitted: 1000 + (i as u64 * 250),
+                    shares_accepted: 950 + (i as u64 * 240),
+                    last_seen: now - chrono::Duration::minutes(i as i64 * 2),
+                    connected_since: now - chrono::Duration::hours(i as i64 + 1),
+                    status: if i == 0 {
+                        "mining"
+                    } else if i == 1 {
+                        "connected"
+                    } else {
+                        "idle"
+                    }
+                    .to_string(),
+                    difficulty: 1000.0 * (i as f64 + 1.0),
+                },
+            );
         }
-        
+
         // Generate mock payouts
         let mut payouts = HashMap::new();
-        let addresses = vec![
+        let addresses = [
             "48abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12",
             "48fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321fedcba09",
         ];
-        
+
         for (i, addr) in addresses.iter().enumerate() {
-            payouts.insert(addr.to_string(), PayoutInfo {
-                address: addr.to_string(),
-                pending_balance: 0.5 + (i as f64 * 0.3),
-                total_paid: 10.0 + (i as f64 * 5.0),
-                last_payment: Some(now - chrono::Duration::days(i as i64 + 1)),
-                payment_threshold: 1.0,
-                auto_payout: true,
-            });
+            payouts.insert(
+                addr.to_string(),
+                PayoutInfo {
+                    address: addr.to_string(),
+                    pending_balance: 0.5 + (i as f64 * 0.3),
+                    total_paid: 10.0 + (i as f64 * 5.0),
+                    last_payment: Some(now - chrono::Duration::days(i as i64 + 1)),
+                    payment_threshold: 1.0,
+                    auto_payout: true,
+                },
+            );
         }
-        
+
         // Generate mock recent blocks
         let mut recent_blocks = Vec::new();
         for i in 0..5 {
@@ -167,13 +186,13 @@ impl Default for StubState {
                 difficulty: 300000000000.0 + (i as f64 * 1000000000.0),
                 reward: 0.6,
                 finder: format!("miner_{:04}", (i % 4) + 1),
-                confirmations: 60 - (i * 10),
+                confirmations: 60 - (i as u32 * 10),
                 status: if i < 2 { "confirmed" } else { "pending" }.to_string(),
             });
         }
-        
+
         let total_hashrate = miners.values().map(|m| m.hashrate_hs).sum::<f64>();
-        
+
         Self {
             pool_stats: PoolStats {
                 pool_hashrate_hs: total_hashrate,
@@ -195,12 +214,12 @@ impl Default for StubState {
 }
 
 // API Handlers
-async fn get_pool_stats(state: AppState) -> Result<Json<PoolStats>, StatusCode> {
+async fn get_pool_stats(State(state): State<AppState>) -> Result<Json<PoolStats>, StatusCode> {
     let state = state.read().await;
     Ok(Json(state.pool_stats.clone()))
 }
 
-async fn get_miners(state: AppState) -> Result<Json<Vec<MinerStats>>, StatusCode> {
+async fn get_miners(State(state): State<AppState>) -> Result<Json<Vec<MinerStats>>, StatusCode> {
     let state = state.read().await;
     let miners: Vec<MinerStats> = state.miners.values().cloned().collect();
     Ok(Json(miners))
@@ -208,7 +227,7 @@ async fn get_miners(state: AppState) -> Result<Json<Vec<MinerStats>>, StatusCode
 
 async fn get_miner(
     Path(miner_id): Path<String>,
-    state: AppState,
+    State(state): State<AppState>,
 ) -> Result<Json<MinerStats>, StatusCode> {
     let state = state.read().await;
     match state.miners.get(&miner_id) {
@@ -217,7 +236,7 @@ async fn get_miner(
     }
 }
 
-async fn get_payouts(state: AppState) -> Result<Json<Vec<PayoutInfo>>, StatusCode> {
+async fn get_payouts(State(state): State<AppState>) -> Result<Json<Vec<PayoutInfo>>, StatusCode> {
     let state = state.read().await;
     let payouts: Vec<PayoutInfo> = state.payouts.values().cloned().collect();
     Ok(Json(payouts))
@@ -225,7 +244,7 @@ async fn get_payouts(state: AppState) -> Result<Json<Vec<PayoutInfo>>, StatusCod
 
 async fn get_payout(
     Path(address): Path<String>,
-    state: AppState,
+    State(state): State<AppState>,
 ) -> Result<Json<PayoutInfo>, StatusCode> {
     let state = state.read().await;
     match state.payouts.get(&address) {
@@ -234,18 +253,18 @@ async fn get_payout(
     }
 }
 
-async fn get_blocks(state: AppState) -> Result<Json<Vec<BlockInfo>>, StatusCode> {
+async fn get_blocks(State(state): State<AppState>) -> Result<Json<Vec<BlockInfo>>, StatusCode> {
     let state = state.read().await;
     Ok(Json(state.recent_blocks.clone()))
 }
 
-async fn health_check(state: AppState) -> Result<Json<HealthStatus>, StatusCode> {
+async fn health_check(State(state): State<AppState>) -> Result<Json<HealthStatus>, StatusCode> {
     let state = state.read().await;
     let system = sysinfo::System::new_all();
-    
+
     let uptime = (Utc::now() - state.start_time).num_seconds() as u64;
-    let memory_usage = (system.used_memory() / 1024 / 1024) as u64;
-    
+    let memory_usage = system.used_memory() / 1024 / 1024;
+
     Ok(Json(HealthStatus {
         status: "healthy".to_string(),
         timestamp: Utc::now(),
@@ -264,19 +283,22 @@ struct PayoutRequest {
 }
 
 async fn trigger_payout(
+    State(state): State<AppState>,
     Json(request): Json<PayoutRequest>,
-    state: AppState,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let mut state = state.write().await;
-    
+
     if let Some(payout) = state.payouts.get_mut(&request.address) {
         if request.amount <= payout.pending_balance {
             payout.pending_balance -= request.amount;
             payout.total_paid += request.amount;
             payout.last_payment = Some(Utc::now());
-            
-            info!("Mock payout triggered: {} XMR to {}", request.amount, request.address);
-            
+
+            info!(
+                "Mock payout triggered: {} XMR to {}",
+                request.amount, request.address
+            );
+
             Ok(Json(serde_json::json!({
                 "success": true,
                 "message": "Payout processed",
@@ -296,28 +318,23 @@ fn create_app(state: AppState) -> Router {
     Router::new()
         // Pool statistics
         .route("/api/v1/pool/stats", get(get_pool_stats))
-        
         // Miner management
         .route("/api/v1/miners", get(get_miners))
         .route("/api/v1/miners/:miner_id", get(get_miner))
-        
         // Payout management
         .route("/api/v1/payouts", get(get_payouts))
         .route("/api/v1/payouts/trigger", post(trigger_payout))
         .route("/api/v1/payouts/:address", get(get_payout))
-        
         // Block information
         .route("/api/v1/blocks", get(get_blocks))
-        
         // Health and monitoring
         .route("/health", get(health_check))
         .route("/api/v1/health", get(health_check))
-        
         .with_state(state)
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
-                .layer(CorsLayer::permissive())
+                .layer(CorsLayer::permissive()),
         )
 }
 
@@ -347,15 +364,21 @@ async fn main() -> anyhow::Result<()> {
     {
         let state_lock = state.read().await;
         info!("Mock pool initialized:");
-        info!("  Total hashrate: {:.2} H/s", state_lock.pool_stats.pool_hashrate_hs);
-        info!("  Connected miners: {}", state_lock.pool_stats.connected_miners);
+        info!(
+            "  Total hashrate: {:.2} H/s",
+            state_lock.pool_stats.pool_hashrate_hs
+        );
+        info!(
+            "  Connected miners: {}",
+            state_lock.pool_stats.connected_miners
+        );
         info!("  Recent blocks: {}", state_lock.recent_blocks.len());
     }
 
     // Create and bind server
     let app = create_app(state);
     let addr: SocketAddr = args.bind.parse()?;
-    
+
     info!("🚀 Pool API Stub listening on http://{}", addr);
     info!("📊 Available endpoints:");
     info!("  GET  /health                    - Health check");
@@ -380,7 +403,7 @@ mod tests {
     #[tokio::test]
     async fn test_stub_state_initialization() {
         let state = StubState::default();
-        
+
         assert!(!state.miners.is_empty());
         assert!(!state.payouts.is_empty());
         assert!(!state.recent_blocks.is_empty());
@@ -390,8 +413,8 @@ mod tests {
     #[tokio::test]
     async fn test_health_check() {
         let state = Arc::new(RwLock::new(StubState::default()));
-        let result = health_check(state).await;
-        
+        let result = health_check(State(state)).await;
+
         assert!(result.is_ok());
         let health = result.unwrap().0;
         assert_eq!(health.status, "healthy");
