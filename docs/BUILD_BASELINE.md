@@ -57,4 +57,4 @@ A quarantined crate can be promoted into the root workspace when:
 
 The daemon is now part of the enforced workspace. The promoted baseline includes real process lifecycle wiring for `StartMining`/`StopMining`, protobuf API alignment, warning-free strict checks, and daemon integration tests.
 
-Automatic third-party miner downloads remain disabled until checksum verification and archive extraction are implemented. If a miner binary is missing, daemon startup fails with an explicit installation error instead of reporting fake success.
+Automatic third-party miner downloads remain disabled until signed release manifest support and archive extraction are implemented. If a miner binary is missing or lacks a trusted SHA-256, daemon startup fails with an explicit installation error instead of reporting fake success.

@@ -2,7 +2,9 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -107,7 +109,7 @@ impl LolMinerAdapter {
                 name: "lolMiner".to_string(),
                 version: "1.82".to_string(),
                 executable_path: PathBuf::new(),
-                checksum_sha256: "a1b2c3d4e5f6789012345678901234567890123456789012345678901234567890".to_string(),
+                checksum_sha256: String::new(),
                 download_url: "https://github.com/Lolliedieb/lolMiner-releases/releases/download/1.82/lolMiner_v1.82_Win64.zip".to_string(),
                 supported_coins: vec!["ethereum".to_string(), "ethereum_classic".to_string(), "beam".to_string()],
                 supported_algorithms: vec!["ethash".to_string(), "etchash".to_string(), "beamhash".to_string()],
@@ -252,33 +254,15 @@ impl MinerAdapter for LolMinerAdapter {
     }
 
     async fn verify_binary(&self, binary_path: &Path) -> Result<()> {
-        if !binary_path.exists() {
-            return Err(anyhow!("Binary not found: {}", binary_path.display()));
-        }
-
-        // TODO: Implement SHA256 checksum verification
-        // For now, just check if file is executable
-        let metadata = fs::metadata(binary_path).context("Failed to read binary metadata")?;
-
-        if !metadata.is_file() {
-            return Err(anyhow!(
-                "Binary path is not a file: {}",
-                binary_path.display()
-            ));
-        }
-
-        Ok(())
+        verify_miner_executable(binary_path, &self.binary_info).await
     }
 
     async fn download_binary(&self, download_dir: &Path) -> Result<PathBuf> {
-        // TODO: Implement secure binary download and verification
-        // For now, return expected path
-        let binary_name = if cfg!(windows) {
-            "lolMiner.exe"
-        } else {
-            "lolMiner"
-        };
-        Ok(download_dir.join("lolMiner").join(binary_name))
+        Err(anyhow!(
+            "Automatic download for {} is disabled until signed release manifests are implemented; install it under {} manually",
+            self.binary_info.name,
+            download_dir.display()
+        ))
     }
 
     fn get_binary_info(&self) -> MinerBinary {
@@ -305,7 +289,7 @@ impl XMRigAdapter {
                 name: "XMRig".to_string(),
                 version: "6.20.0".to_string(),
                 executable_path: PathBuf::new(),
-                checksum_sha256: "b2c3d4e5f6789012345678901234567890123456789012345678901234567890ab".to_string(),
+                checksum_sha256: String::new(),
                 download_url: "https://github.com/xmrig/xmrig/releases/download/v6.20.0/xmrig-6.20.0-msvc-win64.zip".to_string(),
                 supported_coins: vec!["monero".to_string(), "wownero".to_string()],
                 supported_algorithms: vec!["randomx".to_string(), "randomwow".to_string()],
@@ -460,27 +444,15 @@ impl MinerAdapter for XMRigAdapter {
     }
 
     async fn verify_binary(&self, binary_path: &Path) -> Result<()> {
-        if !binary_path.exists() {
-            return Err(anyhow!("Binary not found: {}", binary_path.display()));
-        }
-
-        // TODO: Implement SHA256 checksum verification
-        let metadata = fs::metadata(binary_path).context("Failed to read binary metadata")?;
-
-        if !metadata.is_file() {
-            return Err(anyhow!(
-                "Binary path is not a file: {}",
-                binary_path.display()
-            ));
-        }
-
-        Ok(())
+        verify_miner_executable(binary_path, &self.binary_info).await
     }
 
     async fn download_binary(&self, download_dir: &Path) -> Result<PathBuf> {
-        // TODO: Implement secure binary download and verification
-        let binary_name = if cfg!(windows) { "xmrig.exe" } else { "xmrig" };
-        Ok(download_dir.join("xmrig").join(binary_name))
+        Err(anyhow!(
+            "Automatic download for {} is disabled until signed release manifests are implemented; install it under {} manually",
+            self.binary_info.name,
+            download_dir.display()
+        ))
     }
 
     fn get_binary_info(&self) -> MinerBinary {
@@ -535,38 +507,230 @@ impl MinerManager {
         adapter: &Arc<dyn MinerAdapter>,
     ) -> Result<PathBuf> {
         let binary_info = adapter.get_binary_info();
-        let binary_dir = self.binaries_dir.join(binary_info.name.to_lowercase());
-        let binary_name = if cfg!(windows) {
-            format!("{}.exe", binary_info.name.to_lowercase())
-        } else {
-            binary_info.name.to_lowercase()
-        };
-        let binary_path = binary_dir.join(&binary_name);
+        let candidate_paths = self.candidate_binary_paths(&binary_info);
 
-        // Check if binary exists and is valid
-        match adapter.verify_binary(&binary_path).await {
-            Ok(_) => {
-                debug!(
-                    "Binary {} verified at {}",
-                    binary_info.name,
-                    binary_path.display()
-                );
-                return Ok(binary_path);
+        let mut verification_errors = Vec::new();
+        for binary_path in &candidate_paths {
+            if !binary_path.exists() {
+                verification_errors.push(format!("{}: not found", binary_path.display()));
+                continue;
             }
-            Err(e) => {
-                info!("Binary verification failed for {}: {}", binary_info.name, e);
-                info!("Will attempt to download binary...");
+
+            match adapter.verify_binary(binary_path).await {
+                Ok(()) => {
+                    debug!(
+                        "Binary {} verified at {}",
+                        binary_info.name,
+                        binary_path.display()
+                    );
+                    return Ok(binary_path.clone());
+                }
+                Err(error) => {
+                    verification_errors.push(format!("{}: {error}", binary_path.display()));
+                }
             }
         }
 
+        let binary_dir = self.binaries_dir.join(binary_info.name.to_lowercase());
         fs::create_dir_all(&binary_dir).context("Failed to create binary directory")?;
 
         Err(anyhow!(
-            "{} binary is not installed at {}. Automatic miner downloads are disabled until checksum verification is implemented; install the miner manually or configure BUNKER_MINERS_PATH.",
+            "{} binary is not installed with a trusted checksum. Automatic miner downloads are disabled until signed release manifest support is implemented. Install the miner manually under {}, set BUNKER_MINERS_PATH or BUNKER_MINER_{}_PATH, and provide a SHA-256 via sidecar .sha256 or BUNKER_MINER_{}_SHA256. Verification attempts: {}",
             binary_info.name,
-            binary_path.display()
+            binary_dir.display(),
+            miner_env_key(&binary_info.name),
+            miner_env_key(&binary_info.name),
+            verification_errors.join("; ")
         ))
     }
+
+    fn candidate_binary_paths(&self, binary_info: &MinerBinary) -> Vec<PathBuf> {
+        let binary_name = binary_executable_name(binary_info);
+        let normalized_name = binary_info.name.to_lowercase();
+        let env_key = miner_env_key(&binary_info.name);
+        let mut candidates = Vec::new();
+
+        if !binary_info.executable_path.as_os_str().is_empty() {
+            candidates.push(binary_info.executable_path.clone());
+        }
+
+        if let Ok(path) = std::env::var(format!("BUNKER_MINER_{env_key}_PATH")) {
+            candidates.push(PathBuf::from(path));
+        }
+
+        if let Ok(miners_root) = std::env::var("BUNKER_MINERS_PATH") {
+            let root = PathBuf::from(miners_root);
+            candidates.push(root.join(&binary_name));
+            candidates.push(root.join(&normalized_name).join(&binary_name));
+        }
+
+        candidates.push(self.binaries_dir.join(&normalized_name).join(&binary_name));
+
+        if let Ok(path_path) = which::which(&binary_name) {
+            candidates.push(path_path);
+        }
+
+        dedupe_paths(candidates)
+    }
+}
+
+async fn verify_miner_executable(binary_path: &Path, binary_info: &MinerBinary) -> Result<()> {
+    let metadata = fs::metadata(binary_path).with_context(|| {
+        format!(
+            "Failed to read binary metadata for {}",
+            binary_path.display()
+        )
+    })?;
+
+    if !metadata.is_file() {
+        return Err(anyhow!(
+            "Binary path is not a file: {}",
+            binary_path.display()
+        ));
+    }
+
+    let Some(expected_hash) = expected_sha256(binary_path, binary_info)? else {
+        if allow_unverified_miners() {
+            warn!(
+                "Running unverified {} binary at {} because BUNKER_MINER_ALLOW_UNVERIFIED_MINERS=1",
+                binary_info.name,
+                binary_path.display()
+            );
+            return Ok(());
+        }
+
+        return Err(anyhow!(
+            "No trusted SHA-256 checksum is configured for {}. Provide {}.sha256, BUNKER_MINER_{}_SHA256, or a built-in manifest checksum.",
+            binary_path.display(),
+            binary_path.display(),
+            miner_env_key(&binary_info.name)
+        ));
+    };
+
+    let actual_hash = sha256_file(binary_path).await?;
+    if actual_hash != expected_hash {
+        return Err(anyhow!(
+            "SHA-256 mismatch for {}: expected {}, got {}",
+            binary_path.display(),
+            expected_hash,
+            actual_hash
+        ));
+    }
+
+    Ok(())
+}
+
+fn expected_sha256(binary_path: &Path, binary_info: &MinerBinary) -> Result<Option<String>> {
+    let env_key = format!("BUNKER_MINER_{}_SHA256", miner_env_key(&binary_info.name));
+    if let Ok(value) = std::env::var(env_key) {
+        return Ok(Some(parse_sha256_value(&value)?));
+    }
+
+    let sidecar_path = binary_path.with_extension(format!(
+        "{}sha256",
+        binary_path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(|_| "")
+            .unwrap_or("")
+    ));
+    if sidecar_path.exists() {
+        let sidecar = fs::read_to_string(&sidecar_path).with_context(|| {
+            format!("Failed to read checksum sidecar {}", sidecar_path.display())
+        })?;
+        return Ok(Some(parse_sha256_value(&sidecar)?));
+    }
+
+    let adjacent_sha256 = PathBuf::from(format!("{}.sha256", binary_path.display()));
+    if adjacent_sha256.exists() {
+        let sidecar = fs::read_to_string(&adjacent_sha256).with_context(|| {
+            format!(
+                "Failed to read checksum sidecar {}",
+                adjacent_sha256.display()
+            )
+        })?;
+        return Ok(Some(parse_sha256_value(&sidecar)?));
+    }
+
+    if is_valid_sha256(&binary_info.checksum_sha256) {
+        return Ok(Some(binary_info.checksum_sha256.to_ascii_lowercase()));
+    }
+
+    Ok(None)
+}
+
+async fn sha256_file(path: &Path) -> Result<String> {
+    let data = tokio::fs::read(path)
+        .await
+        .with_context(|| format!("Failed to read {}", path.display()))?;
+    Ok(sha256_bytes(&data))
+}
+
+fn sha256_bytes(data: &[u8]) -> String {
+    let digest = Sha256::digest(data);
+    let mut output = String::with_capacity(64);
+    for byte in digest {
+        write!(&mut output, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    output
+}
+
+fn parse_sha256_value(value: &str) -> Result<String> {
+    let Some(candidate) = value.split_whitespace().find(|part| is_valid_sha256(part)) else {
+        return Err(anyhow!(
+            "Checksum value must contain a 64-character lowercase or uppercase hex SHA-256 digest"
+        ));
+    };
+
+    Ok(candidate.to_ascii_lowercase())
+}
+
+fn is_valid_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn binary_executable_name(binary_info: &MinerBinary) -> String {
+    match binary_info.name.as_str() {
+        "lolMiner" if cfg!(windows) => "lolMiner.exe".to_string(),
+        "lolMiner" => "lolMiner".to_string(),
+        "XMRig" if cfg!(windows) => "xmrig.exe".to_string(),
+        "XMRig" => "xmrig".to_string(),
+        name if cfg!(windows) => format!("{}.exe", name.to_lowercase()),
+        name => name.to_lowercase(),
+    }
+}
+
+fn miner_env_key(name: &str) -> String {
+    name.chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn allow_unverified_miners() -> bool {
+    std::env::var("BUNKER_MINER_ALLOW_UNVERIFIED_MINERS")
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
+}
+
+fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut deduped = Vec::new();
+    for path in paths {
+        let normalized = path.canonicalize().unwrap_or_else(|_| path.clone());
+        if !deduped
+            .iter()
+            .any(|existing: &PathBuf| existing == &normalized)
+        {
+            deduped.push(normalized);
+        }
+    }
+
+    deduped
 }
 
 #[derive(Debug)]
@@ -893,5 +1057,45 @@ mod tests {
         assert!(manager.get_adapter_for_coin("ethereum").is_some());
         assert!(manager.get_adapter_for_coin("monero").is_some());
         assert!(manager.get_adapter_for_coin("bitcoin").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_binary_verification_accepts_sidecar_sha256() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let adapter = LolMinerAdapter::new();
+        let binary_info = adapter.get_binary_info();
+        let binary_path = temp_dir.path().join(binary_executable_name(&binary_info));
+        let binary_contents = b"fake miner binary for checksum verification";
+
+        fs::write(&binary_path, binary_contents).unwrap();
+        fs::write(
+            binary_path.with_extension("sha256"),
+            format!(
+                "{}  {}\n",
+                sha256_bytes(binary_contents),
+                binary_path.display()
+            ),
+        )
+        .unwrap();
+
+        adapter.verify_binary(&binary_path).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_binary_verification_rejects_sidecar_mismatch() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let adapter = XMRigAdapter::new();
+        let binary_info = adapter.get_binary_info();
+        let binary_path = temp_dir.path().join(binary_executable_name(&binary_info));
+
+        fs::write(&binary_path, b"fake miner binary").unwrap();
+        fs::write(
+            binary_path.with_extension("sha256"),
+            format!("{}\n", "0".repeat(64)),
+        )
+        .unwrap();
+
+        let error = adapter.verify_binary(&binary_path).await.unwrap_err();
+        assert!(error.to_string().contains("SHA-256 mismatch"));
     }
 }
