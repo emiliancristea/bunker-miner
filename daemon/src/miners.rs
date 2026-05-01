@@ -986,6 +986,83 @@ impl ProcessSupervisor {
 mod tests {
     use super::*;
 
+    struct ShellTelemetryAdapter {
+        args: Vec<String>,
+        parser: LolMinerAdapter,
+        supported_coins: Vec<String>,
+        supported_algorithms: Vec<String>,
+    }
+
+    impl ShellTelemetryAdapter {
+        fn new() -> Self {
+            let args = if cfg!(windows) {
+                vec![
+                    "/C".to_string(),
+                    "echo GPU 0: 25.5 MH/s && echo Accepted: 15, Rejected: 2".to_string(),
+                ]
+            } else {
+                vec![
+                    "-c".to_string(),
+                    "printf 'GPU 0: 25.5 MH/s\nAccepted: 15, Rejected: 2\n'".to_string(),
+                ]
+            };
+
+            Self {
+                args,
+                parser: LolMinerAdapter::new(),
+                supported_coins: vec![],
+                supported_algorithms: vec![],
+            }
+        }
+    }
+
+    #[async_trait]
+    impl MinerAdapter for ShellTelemetryAdapter {
+        fn get_name(&self) -> &str {
+            "shell-telemetry-test"
+        }
+
+        fn get_supported_coins(&self) -> &[String] {
+            &self.supported_coins
+        }
+
+        fn get_supported_algorithms(&self) -> &[String] {
+            &self.supported_algorithms
+        }
+
+        fn build_args(&self, _config: &Config, _device_ids: &[String]) -> Result<Vec<String>> {
+            Ok(self.args.clone())
+        }
+
+        fn get_telemetry_patterns(&self) -> Vec<Regex> {
+            self.parser.get_telemetry_patterns()
+        }
+
+        fn parse_telemetry_line(&self, line: &str) -> Option<Telemetry> {
+            self.parser.parse_telemetry_line(line)
+        }
+
+        async fn verify_binary(&self, _binary_path: &Path) -> Result<()> {
+            Ok(())
+        }
+
+        async fn download_binary(&self, _download_dir: &Path) -> Result<PathBuf> {
+            Err(anyhow!("test adapter does not download binaries"))
+        }
+
+        fn get_binary_info(&self) -> MinerBinary {
+            MinerBinary {
+                name: self.get_name().to_string(),
+                version: "test".to_string(),
+                executable_path: PathBuf::new(),
+                checksum_sha256: String::new(),
+                download_url: String::new(),
+                supported_coins: vec![],
+                supported_algorithms: vec![],
+            }
+        }
+    }
+
     #[test]
     fn test_lolminer_args_generation() {
         let mut config = Config::default();
@@ -1097,5 +1174,30 @@ mod tests {
 
         let error = adapter.verify_binary(&binary_path).await.unwrap_err();
         assert!(error.to_string().contains("SHA-256 mismatch"));
+    }
+
+    #[tokio::test]
+    async fn test_process_supervisor_streams_miner_telemetry() {
+        let binary_path = if cfg!(windows) {
+            PathBuf::from("cmd")
+        } else {
+            PathBuf::from("/bin/sh")
+        };
+        let adapter: Arc<dyn MinerAdapter> = Arc::new(ShellTelemetryAdapter::new());
+        let mut supervisor =
+            ProcessSupervisor::new(Config::default(), adapter, binary_path, Vec::new());
+        let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel();
+
+        supervisor.start(telemetry_tx).await.unwrap();
+
+        let telemetry = timeout(Duration::from_secs(5), telemetry_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(telemetry.algorithm, "ethash");
+        assert!(telemetry.hashrate_hs > 0.0);
+
+        supervisor.stop().await.unwrap();
     }
 }
