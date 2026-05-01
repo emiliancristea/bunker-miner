@@ -6,15 +6,13 @@ members = [
     "infra/stubs/coin-daemon-stub",
     "infra/stubs/fleet-controller-stub",
     "infra/stubs/pool-api-stub",
+    "tools/bunker-miner-cli",
 ]
 exclude = [
     # Product crates remain outside the enforced workspace until their active
     # placeholder paths and compile blockers are resolved.
     "fleet",
     "pool",
-    # Developer tools are quarantined until their generated protobuf API usage
-    # is brought back in sync with protos/daemon_api.v1.proto.
-    "tools/bunker-miner-cli",
     "tools/poc",
 ]
 

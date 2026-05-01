@@ -66,7 +66,7 @@ Code may be incomplete, mocked, or non-compiling. Documentation may describe int
 - Local daemon can detect hardware with mocks or real devices.
 - No production claims.
 
-Current status: the enforced Rust workspace has reached Level 1 for the promoted daemon and stubs. The daemon is not yet Level 2 because verified miner binary acquisition, packaged setup, and end-user start-to-telemetry validation are still incomplete.
+Current status: the enforced Rust workspace has reached Level 1 for the promoted daemon, CLI, and stubs. The daemon and CLI are not yet Level 2 because packaged setup and end-user start-to-telemetry validation with a verified real miner binary are still incomplete.
 
 ### Level 2: Local Miner MVP
 

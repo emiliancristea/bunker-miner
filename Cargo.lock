@@ -360,6 +360,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "bunker-miner-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "prost",
+ "prost-types",
+ "protoc-bin-vendored",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-build",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "bunker-miner-daemon"
 version = "0.1.0"
 dependencies = [

@@ -14,6 +14,7 @@ The root `Cargo.toml` currently gates:
 - `infra/stubs/coin-daemon-stub`
 - `infra/stubs/fleet-controller-stub`
 - `infra/stubs/pool-api-stub`
+- `tools/bunker-miner-cli`
 
 Required local gate:
 
@@ -31,7 +32,6 @@ The following crates are intentionally excluded from the root workspace until th
 
 - `fleet`
 - `pool`
-- `tools/bunker-miner-cli`
 - `tools/poc`
 
 Quarantine is not a success state. Each quarantined crate must move into the root workspace before it can support product or release claims.
@@ -49,12 +49,16 @@ A quarantined crate can be promoted into the root workspace when:
 
 ## Current Next Promotions
 
-1. `tools/bunker-miner-cli`: depends on daemon proto compatibility and should follow daemon API stabilization.
-2. `fleet`: beta feature after local daemon MVP.
-3. `pool`: separate product tier after mining management foundations are stable.
+1. `fleet`: beta feature after local daemon MVP.
+2. `pool`: separate product tier after mining management foundations are stable.
+3. `tools/poc`: keep quarantined until it has a current owner and a product purpose.
 
 ## Daemon Promotion Notes
 
 The daemon is now part of the enforced workspace. The promoted baseline includes real process lifecycle wiring for `StartMining`/`StopMining`, protobuf API alignment, warning-free strict checks, and daemon integration tests.
 
 Automatic third-party miner downloads remain disabled until signed release manifest support and archive extraction are implemented. If a miner binary is missing or lacks a trusted SHA-256, daemon startup fails with an explicit installation error instead of reporting fake success.
+
+## CLI Promotion Notes
+
+The CLI is now part of the enforced workspace. The promoted baseline includes generated protobuf compatibility with `protos/daemon_api.v1.proto`, strict command parsing, real `StartMiningRequest` construction, `StopMining` support, telemetry streaming, config get/set, and parser unit tests.

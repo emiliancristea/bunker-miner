@@ -1,185 +1,167 @@
-use anyhow::{anyhow, Result};
-use clap::{Arg, Command};
-use std::time::Duration;
+use anyhow::{anyhow, bail, Context, Result};
+use clap::{ArgAction, Args, CommandFactory, Parser, Subcommand};
+use std::collections::HashMap;
+use std::fs;
+use std::io::{self, Write};
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
 use tokio_stream::StreamExt;
 use tonic::transport::Channel;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
-// Include the generated gRPC client code
 include!("generated/bunker.daemon.v1.rs");
 
 use bunker_miner_daemon_client::BunkerMinerDaemonClient;
-use google::protobuf::Empty;
+
+#[derive(Debug, Parser)]
+#[command(
+    name = "bunker-miner-cli",
+    version,
+    author,
+    about = "Command-line control surface for the BUNKER MINER daemon"
+)]
+struct Cli {
+    #[arg(
+        long,
+        short = 'a',
+        value_name = "ADDRESS",
+        default_value = "http://127.0.0.1:50051"
+    )]
+    address: String,
+
+    #[arg(long, short = 't', value_name = "SECONDS", default_value_t = 30)]
+    timeout: u64,
+
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Debug, Subcommand)]
+enum Commands {
+    Info,
+    Health,
+    Start(StartArgs),
+    Stop(StopArgs),
+    Watch(WatchArgs),
+    Profitability,
+    Config(ConfigArgs),
+}
+
+#[derive(Debug, Args)]
+struct StartArgs {
+    #[arg(long, short = 'A', value_name = "ALGORITHM")]
+    algorithm: String,
+
+    #[arg(long, short = 'p', value_name = "HOST:PORT")]
+    pool: String,
+
+    #[arg(long, short = 'w', value_name = "ADDRESS")]
+    wallet: String,
+
+    #[arg(long, value_name = "NAME", default_value = "bunker-miner-cli")]
+    worker: String,
+
+    #[arg(long, value_name = "PASSWORD", default_value = "x")]
+    password: String,
+
+    #[arg(long = "device", value_name = "ID", action = ArgAction::Append)]
+    devices: Vec<String>,
+
+    #[arg(long, value_name = "0.0-1.0", default_value_t = 1.0)]
+    intensity: f32,
+
+    #[arg(long = "param", value_name = "KEY=VALUE", action = ArgAction::Append)]
+    params: Vec<String>,
+
+    #[arg(long = "timeout-seconds", value_name = "SECONDS", default_value_t = 30)]
+    timeout_seconds: u32,
+
+    #[arg(
+        long = "keep-existing",
+        action = ArgAction::SetFalse,
+        default_value_t = true
+    )]
+    stop_existing: bool,
+}
+
+#[derive(Debug, Args)]
+struct StopArgs {
+    #[arg(long = "device", value_name = "ID", action = ArgAction::Append)]
+    devices: Vec<String>,
+
+    #[arg(long, short = 'f', action = ArgAction::SetTrue)]
+    force: bool,
+
+    #[arg(long = "timeout-seconds", value_name = "SECONDS", default_value_t = 30)]
+    timeout_seconds: u32,
+}
+
+#[derive(Debug, Args)]
+struct WatchArgs {
+    #[arg(long, short = 'i', value_name = "SECONDS", default_value_t = 1)]
+    interval: u64,
+}
+
+#[derive(Debug, Args)]
+struct ConfigArgs {
+    #[command(subcommand)]
+    command: Option<ConfigCommands>,
+}
+
+#[derive(Debug, Subcommand)]
+enum ConfigCommands {
+    Get {
+        #[arg(long, short = 's', value_name = "SECTION")]
+        section: Option<String>,
+    },
+    Set {
+        #[arg(long, short = 'c', value_name = "JSON", conflicts_with = "file")]
+        config: Option<String>,
+
+        #[arg(long, short = 'f', value_name = "PATH", conflicts_with = "config")]
+        file: Option<PathBuf>,
+
+        #[arg(long = "validate-only", action = ArgAction::SetTrue)]
+        validate_only: bool,
+
+        #[arg(
+            long = "no-restart",
+            action = ArgAction::SetFalse,
+            default_value_t = true
+        )]
+        restart_services: bool,
+    },
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging
     tracing_subscriber::fmt::init();
 
-    let matches = Command::new("bunker-miner-cli")
-        .version("0.1.0")
-        .author("Emilian Cristea <emilian@bunkercorpo.com>")
-        .about("BUNKER MINER CLI - Command-line interface for the BUNKER MINER daemon")
-        .arg(
-            Arg::new("address")
-                .long("address")
-                .short('a')
-                .help("Daemon gRPC server address")
-                .value_name("ADDRESS")
-                .default_value("http://127.0.0.1:50051")
-        )
-        .arg(
-            Arg::new("timeout")
-                .long("timeout")
-                .short('t')
-                .help("Request timeout in seconds")
-                .value_name("SECONDS")
-                .default_value("30")
-        )
-        .subcommand(
-            Command::new("info")
-                .about("Get system and device information")
-        )
-        .subcommand(
-            Command::new("health")
-                .about("Check daemon health status")
-        )
-        .subcommand(
-            Command::new("start")
-                .about("Start mining operations")
-                .arg(
-                    Arg::new("algorithm")
-                        .long("algorithm")
-                        .short('A')
-                        .help("Mining algorithm")
-                        .value_name("ALGORITHM")
-                )
-                .arg(
-                    Arg::new("pool")
-                        .long("pool")
-                        .short('p')
-                        .help("Mining pool URL")
-                        .value_name("URL")
-                )
-                .arg(
-                    Arg::new("wallet")
-                        .long("wallet")
-                        .short('w')
-                        .help("Wallet address")
-                        .value_name("ADDRESS")
-                )
-                .arg(
-                    Arg::new("worker")
-                        .long("worker")
-                        .help("Worker name")
-                        .value_name("NAME")
-                        .default_value("bunker-miner-cli")
-                )
-        )
-        .subcommand(
-            Command::new("stop")
-                .about("Stop mining operations")
-                .arg(
-                    Arg::new("force")
-                        .long("force")
-                        .short('f')
-                        .help("Force stop mining processes")
-                        .action(clap::ArgAction::SetTrue)
-                )
-        )
-        .subcommand(
-            Command::new("watch")
-                .about("Watch real-time mining telemetry")
-                .arg(
-                    Arg::new("interval")
-                        .long("interval")
-                        .short('i')
-                        .help("Update interval in seconds")
-                        .value_name("SECONDS")
-                        .default_value("5")
-                )
-        )
-        .subcommand(
-            Command::new("profitability")
-                .about("Get profitability information")
-        )
-        .subcommand(
-            Command::new("config")
-                .about("Configuration management")
-                .subcommand(
-                    Command::new("get")
-                        .about("Get configuration")
-                        .arg(
-                            Arg::new("section")
-                                .long("section")
-                                .short('s')
-                                .help("Configuration section")
-                                .value_name("SECTION")
-                        )
-                )
-                .subcommand(
-                    Command::new("set")
-                        .about("Set configuration")
-                        .arg(
-                            Arg::new("config")
-                                .long("config")
-                                .short('c')
-                                .help("Configuration JSON")
-                                .value_name("JSON")
-                                .required(true)
-                        )
-                        .arg(
-                            Arg::new("validate-only")
-                                .long("validate-only")
-                                .help("Only validate, don't apply")
-                                .action(clap::ArgAction::SetTrue)
-                        )
-                )
-        )
-        .get_matches();
+    let cli = Cli::parse();
+    let Some(command) = cli.command else {
+        Cli::command().print_help()?;
+        println!();
+        return Ok(());
+    };
 
-    let address = matches.get_one::<String>("address").unwrap();
-    let timeout_secs: u64 = matches.get_one::<String>("timeout").unwrap().parse()
-        .map_err(|_| anyhow!("Invalid timeout value"))?;
-
-    info!("Connecting to daemon at {}", address);
-
-    // Create gRPC client with timeout
-    let channel = Channel::from_shared(address.clone())?
-        .timeout(Duration::from_secs(timeout_secs))
+    info!("Connecting to daemon at {}", cli.address);
+    let channel = Channel::from_shared(cli.address.clone())?
+        .timeout(Duration::from_secs(cli.timeout))
         .connect()
-        .await?;
-    
+        .await
+        .with_context(|| format!("failed to connect to daemon at {}", cli.address))?;
+
     let mut client = BunkerMinerDaemonClient::new(channel);
+    debug!("Connected to daemon");
 
-    debug!("Connected to daemon, executing command");
-
-    match matches.subcommand() {
-        Some(("info", _)) => {
-            info_command(&mut client).await?;
-        }
-        Some(("health", _)) => {
-            health_command(&mut client).await?;
-        }
-        Some(("start", sub_matches)) => {
-            start_command(&mut client, sub_matches).await?;
-        }
-        Some(("stop", sub_matches)) => {
-            stop_command(&mut client, sub_matches).await?;
-        }
-        Some(("watch", sub_matches)) => {
-            watch_command(&mut client, sub_matches).await?;
-        }
-        Some(("profitability", _)) => {
-            profitability_command(&mut client).await?;
-        }
-        Some(("config", sub_matches)) => {
-            config_command(&mut client, sub_matches).await?;
-        }
-        _ => {
-            println!("BUNKER MINER CLI v0.1.0");
-            println!("Use --help to see available commands");
-        }
+    match command {
+        Commands::Info => info_command(&mut client).await?,
+        Commands::Health => health_command(&mut client).await?,
+        Commands::Start(args) => start_command(&mut client, args).await?,
+        Commands::Stop(args) => stop_command(&mut client, args).await?,
+        Commands::Watch(args) => watch_command(&mut client, args).await?,
+        Commands::Profitability => profitability_command(&mut client).await?,
+        Commands::Config(args) => config_command(&mut client, args).await?,
     }
 
     Ok(())
@@ -189,79 +171,60 @@ async fn info_command(client: &mut BunkerMinerDaemonClient<Channel>) -> Result<(
     println!("BUNKER MINER - System Information");
     println!("=================================");
 
-    let response = client
-        .get_system_info(Empty {})
-        .await?
-        .into_inner();
+    let response = client.get_system_info(()).await?.into_inner();
 
-    // Display system information
     if let Some(system_info) = response.system_info {
-        println!("\n📋 System Information:");
+        println!();
+        println!("System");
         println!("  OS: {} {}", system_info.os_name, system_info.os_version);
-        println!("  CPU: {} ({} cores, {} threads)", 
-                 system_info.cpu_name, 
-                 system_info.cpu_cores, 
-                 system_info.cpu_threads);
-        println!("  Memory: {:.1} GB total, {:.1} GB available", 
-                 system_info.total_memory_gb, 
-                 system_info.available_memory_gb);
+        println!(
+            "  CPU: {} ({} cores, {} threads)",
+            system_info.cpu_name, system_info.cpu_cores, system_info.cpu_threads
+        );
+        println!(
+            "  Memory: {} GB total, {} GB available",
+            system_info.total_memory_gb, system_info.available_memory_gb
+        );
         println!("  Uptime: {} seconds", system_info.uptime_seconds);
     }
 
-    // Display version information
     if let Some(version_info) = response.version_info {
-        println!("\n📦 Version Information:");
+        println!();
+        println!("Version");
         println!("  Daemon: {}", version_info.daemon_version);
         println!("  API: {}", version_info.api_version);
         println!("  Build: {}", version_info.build_timestamp);
         println!("  Git: {}", version_info.git_commit);
     }
 
-    // Display devices
-    println!("\n🔧 Mining Devices ({}):", response.devices.len());
-    for (i, device) in response.devices.iter().enumerate() {
-        println!("\n{}. {} (ID: {})", i + 1, device.name, device.device_id);
-        
-        let vendor_name = match device_info::Vendor::from_i32(device.vendor) {
-            Some(device_info::Vendor::VendorNvidia) => "NVIDIA",
-            Some(device_info::Vendor::VendorAmd) => "AMD", 
-            Some(device_info::Vendor::VendorIntel) => "Intel",
-            _ => "Unknown",
-        };
-        
-        let device_type = match device_info::DeviceType::from_i32(device.device_type) {
-            Some(device_info::DeviceType::DeviceTypeGpu) => "GPU",
-            Some(device_info::DeviceType::DeviceTypeCpu) => "CPU",
-            Some(device_info::DeviceType::DeviceTypeAsic) => "ASIC",
-            Some(device_info::DeviceType::DeviceTypeFpga) => "FPGA",
-            _ => "Unknown",
-        };
-        
-        println!("   Vendor: {}", vendor_name);
-        println!("   Type: {}", device_type);
-        
+    println!();
+    println!("Mining Devices ({})", response.devices.len());
+    for (index, device) in response.devices.iter().enumerate() {
+        println!();
+        println!("{}. {} ({})", index + 1, device.name, device.device_id);
+        println!("   Vendor: {}", vendor_label(device.vendor));
+        println!("   Type: {}", device_type_label(device.device_type));
+
         if device.vram_mb > 0 {
             println!("   VRAM: {:.1} GB", device.vram_mb as f64 / 1024.0);
         }
-        
         if device.core_count > 0 {
             println!("   Cores: {}", device.core_count);
         }
-        
         if !device.driver_version.is_empty() {
             println!("   Driver: {}", device.driver_version);
         }
-        
+        if !device.compute_capability.is_empty() {
+            println!("   Compute: {}", device.compute_capability);
+        }
         if !device.capabilities.is_empty() {
             println!("   Capabilities: {}", device.capabilities.join(", "));
         }
     }
 
-    if let Some(timestamp) = response.timestamp {
-        let dt = chrono::DateTime::from_timestamp(timestamp.seconds, timestamp.nanos as u32);
-        if let Some(dt) = dt {
-            println!("\n🕒 Response time: {}", dt.format("%Y-%m-%d %H:%M:%S UTC"));
-        }
+    if let Some(timestamp) = format_timestamp(response.timestamp.as_ref()) {
+        println!();
+        println!("Response time: {timestamp}");
     }
 
     Ok(())
@@ -271,41 +234,26 @@ async fn health_command(client: &mut BunkerMinerDaemonClient<Channel>) -> Result
     println!("BUNKER MINER - Health Status");
     println!("============================");
 
-    let response = client
-        .health_check(Empty {})
-        .await?
-        .into_inner();
+    let response = client.health_check(()).await?.into_inner();
 
-    let overall_status = match health_check_response::HealthStatus::from_i32(response.status) {
-        Some(health_check_response::HealthStatus::HealthHealthy) => "🟢 HEALTHY",
-        Some(health_check_response::HealthStatus::HealthDegraded) => "🟡 DEGRADED",
-        Some(health_check_response::HealthStatus::HealthUnhealthy) => "🔴 UNHEALTHY",
-        _ => "❓ UNKNOWN",
-    };
+    println!();
+    println!("Overall Status: {}", health_status_label(response.status));
+    println!("Uptime: {} seconds", response.uptime_seconds);
 
-    println!("\n📊 Overall Status: {}", overall_status);
-    println!("⏱️  Uptime: {} seconds", response.uptime_seconds);
-
-    println!("\n🔍 Component Health:");
+    println!();
+    println!("Components");
     for component in response.component_health {
-        let status_icon = match health_check_response::HealthStatus::from_i32(component.status) {
-            Some(health_check_response::HealthStatus::HealthHealthy) => "✅",
-            Some(health_check_response::HealthStatus::HealthDegraded) => "⚠️",
-            Some(health_check_response::HealthStatus::HealthUnhealthy) => "❌",
-            _ => "❓",
-        };
-
-        println!("  {} {}: {}", 
-                 status_icon, 
-                 component.component_name, 
-                 component.status_message);
+        println!(
+            "  {}: {} ({})",
+            component.component_name,
+            health_status_label(component.status),
+            component.status_message
+        );
     }
 
-    if let Some(timestamp) = response.timestamp {
-        let dt = chrono::DateTime::from_timestamp(timestamp.seconds, timestamp.nanos as u32);
-        if let Some(dt) = dt {
-            println!("\n🕒 Check time: {}", dt.format("%Y-%m-%d %H:%M:%S UTC"));
-        }
+    if let Some(timestamp) = format_timestamp(response.timestamp.as_ref()) {
+        println!();
+        println!("Check time: {timestamp}");
     }
 
     Ok(())
@@ -313,260 +261,434 @@ async fn health_command(client: &mut BunkerMinerDaemonClient<Channel>) -> Result
 
 async fn start_command(
     client: &mut BunkerMinerDaemonClient<Channel>,
-    matches: &clap::ArgMatches,
+    args: StartArgs,
 ) -> Result<()> {
-    println!("BUNKER MINER - Start Mining");
-    println!("==========================");
+    let request = build_start_request(args)?;
 
-    // TODO: Build proper MiningConfig from arguments
-    let request = StartMiningRequest {
-        config: None, // Will be implemented with actual mining config
-        stop_existing: true,
-        timeout_seconds: 30,
-    };
+    println!("BUNKER MINER - Start Mining");
+    println!("===========================");
 
     let response = client.start_mining(request).await?.into_inner();
-
-    let status = match command_response::Status::from_i32(response.status) {
-        Some(command_response::Status::StatusSuccess) => "✅ SUCCESS",
-        Some(command_response::Status::StatusError) => "❌ ERROR",
-        Some(command_response::Status::StatusTimeout) => "⏱️ TIMEOUT",
-        Some(command_response::Status::StatusPartialSuccess) => "⚠️ PARTIAL SUCCESS",
-        _ => "❓ UNKNOWN",
-    };
-
-    println!("\n📊 Result: {}", status);
-    println!("💬 Message: {}", response.message);
-
-    if let Some(error_details) = response.error_details {
-        println!("\n❌ Error Details:");
-        println!("  Code: {}", error_details.error_code);
-        println!("  Description: {}", error_details.error_description);
-        
-        if !error_details.affected_devices.is_empty() {
-            println!("  Affected devices: {}", error_details.affected_devices.join(", "));
-        }
-        
-        if !error_details.remediation_steps.is_empty() {
-            println!("  Remediation:");
-            for (i, step) in error_details.remediation_steps.iter().enumerate() {
-                println!("    {}. {}", i + 1, step);
-            }
-        }
-    }
-
-    println!("⏱️ Execution time: {}ms", response.execution_duration_ms);
+    print_command_response(&response);
 
     Ok(())
 }
 
-async fn stop_command(
-    client: &mut BunkerMinerDaemonClient<Channel>,
-    matches: &clap::ArgMatches,
-) -> Result<()> {
+async fn stop_command(client: &mut BunkerMinerDaemonClient<Channel>, args: StopArgs) -> Result<()> {
     println!("BUNKER MINER - Stop Mining");
-    println!("=========================");
-
-    let force_stop = matches.get_flag("force");
+    println!("==========================");
 
     let request = StopMiningRequest {
-        device_ids: vec![], // Empty = stop all
-        force_stop,
-        timeout_seconds: 30,
+        device_ids: args.devices,
+        force_stop: args.force,
+        timeout_seconds: bounded_timeout(args.timeout_seconds, 30, 60),
     };
 
     let response = client.stop_mining(request).await?.into_inner();
-
-    let status = match command_response::Status::from_i32(response.status) {
-        Some(command_response::Status::StatusSuccess) => "✅ SUCCESS",
-        Some(command_response::Status::StatusError) => "❌ ERROR", 
-        Some(command_response::Status::StatusTimeout) => "⏱️ TIMEOUT",
-        Some(command_response::Status::StatusPartialSuccess) => "⚠️ PARTIAL SUCCESS",
-        _ => "❓ UNKNOWN",
-    };
-
-    println!("\n📊 Result: {}", status);
-    println!("💬 Message: {}", response.message);
-    println!("⏱️ Execution time: {}ms", response.execution_duration_ms);
+    print_command_response(&response);
 
     Ok(())
 }
 
 async fn watch_command(
     client: &mut BunkerMinerDaemonClient<Channel>,
-    matches: &clap::ArgMatches,
+    args: WatchArgs,
 ) -> Result<()> {
     println!("BUNKER MINER - Live Telemetry Stream");
     println!("====================================");
-    println!("💡 Press Ctrl+C to stop watching\n");
+    println!("Press Ctrl+C to stop watching");
+    println!();
 
-    let mut stream = client
-        .stream_telemetry(Empty {})
-        .await?
-        .into_inner();
+    let mut stream = client.stream_telemetry(()).await?.into_inner();
+    let min_interval = Duration::from_secs(args.interval.max(1));
+    let mut last_print = Instant::now()
+        .checked_sub(min_interval)
+        .unwrap_or_else(Instant::now);
 
     while let Some(telemetry) = stream.next().await {
         let telemetry = telemetry?;
-
-        let timestamp = if let Some(ts) = telemetry.timestamp {
-            chrono::DateTime::from_timestamp(ts.seconds, ts.nanos as u32)
-                .map(|dt| dt.format("%H:%M:%S").to_string())
-                .unwrap_or_else(|| "Unknown".to_string())
-        } else {
-            "Unknown".to_string()
-        };
-
-        let device_status = match telemetry::DeviceStatus::from_i32(telemetry.device_status) {
-            Some(telemetry::DeviceStatus::DeviceStatusMining) => "⛏️ MINING",
-            Some(telemetry::DeviceStatus::DeviceStatusIdle) => "💤 IDLE",
-            Some(telemetry::DeviceStatus::DeviceStatusError) => "❌ ERROR",
-            Some(telemetry::DeviceStatus::DeviceStatusThermalThrottling) => "🔥 THERMAL",
-            Some(telemetry::DeviceStatus::DeviceStatusPowerThrottling) => "⚡ POWER",
-            Some(telemetry::DeviceStatus::DeviceStatusOffline) => "📴 OFFLINE",
-            _ => "❓ UNKNOWN",
-        };
-
-        print!("\r[{}] Device: {} | Status: {} | ", 
-               timestamp, 
-               telemetry.device_id, 
-               device_status);
-        print!("Hashrate: {:.2} MH/s | Power: {}W | Temp: {}°C | ",
-               telemetry.hashrate_mhs,
-               telemetry.power_watts,
-               telemetry.temperature_celsius);
-
-        if let Some(shares) = telemetry.shares {
-            print!("Shares: A:{} R:{} ({:.1}%)",
-                   shares.accepted,
-                   shares.rejected,
-                   shares.acceptance_rate * 100.0);
+        if last_print.elapsed() < min_interval {
+            continue;
         }
+        last_print = Instant::now();
 
-        print!("                    "); // Clear any remaining text
-        std::io::Write::flush(&mut std::io::stdout()).ok();
+        let timestamp =
+            format_timestamp(telemetry.timestamp.as_ref()).unwrap_or_else(|| "unknown".to_string());
+        let shares = telemetry
+            .shares
+            .as_ref()
+            .map(|shares| {
+                format!(
+                    "shares accepted={} rejected={} stale={} acceptance={:.1}%",
+                    shares.accepted,
+                    shares.rejected,
+                    shares.stale,
+                    shares.acceptance_rate * 100.0
+                )
+            })
+            .unwrap_or_else(|| "shares unavailable".to_string());
 
-        // Small delay to prevent overwhelming the terminal
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        println!(
+            "[{}] device={} status={} algorithm={} hashrate={:.2} MH/s power={}W temp={}C fan={} util={} mem_util={} {} pool={}",
+            timestamp,
+            telemetry.device_id,
+            device_status_label(telemetry.device_status),
+            telemetry.algorithm,
+            telemetry.hashrate_mhs,
+            telemetry.power_watts,
+            telemetry.temperature_celsius,
+            telemetry.fan_speed_percent,
+            telemetry.utilization_percent,
+            telemetry.memory_utilization_percent,
+            shares,
+            telemetry.pool_url,
+        );
+
+        io::stdout().flush().ok();
     }
 
-    println!("\n\n📡 Telemetry stream ended");
+    println!();
+    println!("Telemetry stream ended");
     Ok(())
 }
 
 async fn profitability_command(client: &mut BunkerMinerDaemonClient<Channel>) -> Result<()> {
     println!("BUNKER MINER - Profitability Information");
-    println!("=======================================");
+    println!("========================================");
 
-    let response = client
-        .get_profitability(Empty {})
-        .await?
-        .into_inner();
+    let response = client.get_profitability(()).await?.into_inner();
 
     if response.profitability_info.is_empty() {
-        println!("📊 No profitability data available yet");
-        println!("💡 This feature will be implemented in a future release");
+        println!();
+        println!("No profitability data available from the daemon.");
     } else {
-        println!("\n💰 Recommended Algorithm: {}", response.recommended_algorithm);
-        
+        println!();
+        println!("Recommended Algorithm: {}", response.recommended_algorithm);
+
         for info in response.profitability_info {
-            println!("\n🪙 {} ({}):", info.algorithm, info.coin);
-            println!("  Revenue: €{:.4}/day", info.revenue_eur_day);
-            println!("  Cost: €{:.4}/day", info.cost_eur_day);
-            println!("  Profit: €{:.4}/day", info.profit_eur_day);
-            println!("  Coin Price: €{:.4}", info.coin_price_eur);
+            println!();
+            println!("{} ({})", info.algorithm, info.coin);
+            println!("  Revenue: EUR {:.4}/day", info.revenue_eur_day);
+            println!("  Cost: EUR {:.4}/day", info.cost_eur_day);
+            println!("  Profit: EUR {:.4}/day", info.profit_eur_day);
+            println!("  Coin Price: EUR {:.4}", info.coin_price_eur);
             println!("  Confidence: {:.1}%", info.confidence * 100.0);
+            println!("  Source: {}", info.data_source);
         }
     }
 
-    if let Some(timestamp) = response.timestamp {
-        let dt = chrono::DateTime::from_timestamp(timestamp.seconds, timestamp.nanos as u32);
-        if let Some(dt) = dt {
-            println!("\n🕒 Data time: {}", dt.format("%Y-%m-%d %H:%M:%S UTC"));
-        }
+    if let Some(timestamp) = format_timestamp(response.timestamp.as_ref()) {
+        println!();
+        println!("Data time: {timestamp}");
     }
-    
-    println!("📅 Data age: {} seconds", response.data_age_seconds);
+    println!("Data age: {} seconds", response.data_age_seconds);
 
     Ok(())
 }
 
 async fn config_command(
     client: &mut BunkerMinerDaemonClient<Channel>,
-    matches: &clap::ArgMatches,
+    args: ConfigArgs,
 ) -> Result<()> {
-    match matches.subcommand() {
-        Some(("get", sub_matches)) => {
-            let section = sub_matches.get_one::<String>("section")
-                .map(|s| s.as_str())
-                .unwrap_or("");
-
-            let request = GetConfigRequest {
-                section: section.to_string(),
-            };
-
-            let response = client.get_config(request).await?.into_inner();
+    match args.command {
+        Some(ConfigCommands::Get { section }) => {
+            let section = section.unwrap_or_default();
+            let response = client
+                .get_config(GetConfigRequest {
+                    section: section.clone(),
+                })
+                .await?
+                .into_inner();
 
             println!("BUNKER MINER - Configuration");
             println!("============================");
-            
             if !section.is_empty() {
-                println!("📁 Section: {}", section);
+                println!("Section: {section}");
             }
-            
-            println!("📋 Configuration:\n");
-            
-            // Pretty print the JSON
-            if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&response.config_json) {
+            println!();
+
+            if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&response.config_json)
+            {
                 println!("{}", serde_json::to_string_pretty(&json_value)?);
             } else {
                 println!("{}", response.config_json);
             }
-            
-            println!("\n🏷️ Version: {}", response.config_version);
-        }
-        Some(("set", sub_matches)) => {
-            let config_json = sub_matches.get_one::<String>("config").unwrap();
-            let validate_only = sub_matches.get_flag("validate-only");
 
-            let request = SetConfigRequest {
-                config_json: config_json.clone(),
-                validate_only,
-                restart_services: true,
+            println!();
+            println!("Version: {}", response.config_version);
+        }
+        Some(ConfigCommands::Set {
+            config,
+            file,
+            validate_only,
+            restart_services,
+        }) => {
+            let config_json = match (config, file) {
+                (Some(config), None) => config,
+                (None, Some(path)) => fs::read_to_string(&path)
+                    .with_context(|| format!("failed to read {}", path.display()))?,
+                _ => bail!("provide either --config JSON or --file PATH"),
             };
 
-            let response = client.set_config(request).await?.into_inner();
+            serde_json::from_str::<serde_json::Value>(&config_json)
+                .context("configuration payload must be valid JSON")?;
+
+            let response = client
+                .set_config(SetConfigRequest {
+                    config_json,
+                    validate_only,
+                    restart_services,
+                })
+                .await?
+                .into_inner();
 
             println!("BUNKER MINER - Set Configuration");
-            println!("===============================");
-
-            let status = match command_response::Status::from_i32(response.status) {
-                Some(command_response::Status::StatusSuccess) => "✅ SUCCESS",
-                Some(command_response::Status::StatusError) => "❌ ERROR",
-                _ => "❓ UNKNOWN",
-            };
-
-            println!("\n📊 Result: {}", status);
+            println!("================================");
+            println!();
+            println!("Result: {}", command_status_label(response.status));
 
             if !response.validation_errors.is_empty() {
-                println!("\n❌ Validation Errors:");
-                for (i, error) in response.validation_errors.iter().enumerate() {
-                    println!("  {}. {}", i + 1, error);
+                println!();
+                println!("Validation Errors");
+                for (index, error) in response.validation_errors.iter().enumerate() {
+                    println!("  {}. {}", index + 1, error);
                 }
             }
 
             if !response.services_requiring_restart.is_empty() {
-                println!("\n🔄 Services requiring restart:");
+                println!();
+                println!("Services requiring restart");
                 for service in response.services_requiring_restart {
-                    println!("  - {}", service);
+                    println!("  - {service}");
                 }
             }
         }
-        _ => {
+        None => {
             println!("BUNKER MINER - Configuration Management");
-            println!("======================================");
-            println!("Use 'config get' or 'config set' subcommands");
+            println!("=======================================");
+            println!("Use 'config get' or 'config set --help'.");
         }
     }
 
     Ok(())
+}
+
+fn build_start_request(args: StartArgs) -> Result<StartMiningRequest> {
+    let algorithm = require_non_empty("algorithm", args.algorithm)?;
+    let wallet_address = require_non_empty("wallet", args.wallet)?;
+    let worker_name = require_non_empty("worker", args.worker)?;
+    let (pool_url, pool_port) = parse_pool_endpoint(&args.pool)?;
+
+    if !(0.0..=1.0).contains(&args.intensity) {
+        bail!("intensity must be between 0.0 and 1.0");
+    }
+
+    Ok(StartMiningRequest {
+        config: Some(MiningConfig {
+            algorithm,
+            pool_url,
+            pool_port,
+            worker_name,
+            wallet_address,
+            password: args.password,
+            target_device_ids: args.devices,
+            intensity: args.intensity,
+            extra_params: parse_extra_params(args.params)?,
+        }),
+        stop_existing: args.stop_existing,
+        timeout_seconds: bounded_timeout(args.timeout_seconds, 30, 300),
+    })
+}
+
+fn parse_pool_endpoint(pool: &str) -> Result<(String, u32)> {
+    let pool = pool.trim().trim_end_matches('/');
+    if pool.is_empty() {
+        bail!("pool endpoint must not be empty");
+    }
+
+    let host_start = pool.find("://").map_or(0, |index| index + 3);
+    let endpoint = &pool[host_start..];
+    let colon_index = endpoint.rfind(':').ok_or_else(|| {
+        anyhow!("pool endpoint must include a port, for example pool.example:3333")
+    })?;
+
+    let port = &endpoint[colon_index + 1..];
+    if port.is_empty() || port.contains('/') {
+        bail!("pool endpoint port is invalid");
+    }
+
+    let port = port
+        .parse::<u32>()
+        .context("pool endpoint port must be a number")?;
+    if port == 0 || port > u16::MAX as u32 {
+        bail!("pool endpoint port must be between 1 and 65535");
+    }
+
+    let host = &endpoint[..colon_index];
+    if host.is_empty() {
+        bail!("pool endpoint host must not be empty");
+    }
+
+    Ok((format!("{}{}", &pool[..host_start], host), port))
+}
+
+fn parse_extra_params(params: Vec<String>) -> Result<HashMap<String, String>> {
+    let mut parsed = HashMap::new();
+    for param in params {
+        let (key, value) = param
+            .split_once('=')
+            .ok_or_else(|| anyhow!("--param values must use KEY=VALUE format"))?;
+        let key = require_non_empty("param key", key.to_string())?;
+        parsed.insert(key, value.to_string());
+    }
+    Ok(parsed)
+}
+
+fn require_non_empty(field: &str, value: String) -> Result<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        bail!("{field} must not be empty");
+    }
+    Ok(trimmed.to_string())
+}
+
+fn bounded_timeout(value: u32, default_value: u32, max_value: u32) -> u32 {
+    if value == 0 {
+        default_value
+    } else {
+        value.min(max_value)
+    }
+}
+
+fn print_command_response(response: &CommandResponse) {
+    println!();
+    println!("Result: {}", command_status_label(response.status));
+    println!("Message: {}", response.message);
+    println!("Execution time: {}ms", response.execution_duration_ms);
+
+    if let Some(error_details) = response.error_details.as_ref() {
+        println!();
+        println!("Error Details");
+        println!("  Code: {}", error_details.error_code);
+        println!("  Description: {}", error_details.error_description);
+
+        if !error_details.affected_devices.is_empty() {
+            println!(
+                "  Affected devices: {}",
+                error_details.affected_devices.join(", ")
+            );
+        }
+
+        if !error_details.remediation_steps.is_empty() {
+            println!("  Remediation");
+            for (index, step) in error_details.remediation_steps.iter().enumerate() {
+                println!("    {}. {}", index + 1, step);
+            }
+        }
+    }
+
+    if let Some(timestamp) = format_timestamp(response.timestamp.as_ref()) {
+        println!("Timestamp: {timestamp}");
+    }
+}
+
+fn vendor_label(value: i32) -> &'static str {
+    match enum_value(value, device_info::Vendor::Unknown) {
+        device_info::Vendor::Nvidia => "NVIDIA",
+        device_info::Vendor::Amd => "AMD",
+        device_info::Vendor::Intel => "Intel",
+        device_info::Vendor::Other => "Other",
+        device_info::Vendor::Unknown => "Unknown",
+    }
+}
+
+fn device_type_label(value: i32) -> &'static str {
+    match enum_value(value, device_info::DeviceType::Unknown) {
+        device_info::DeviceType::Gpu => "GPU",
+        device_info::DeviceType::Cpu => "CPU",
+        device_info::DeviceType::Asic => "ASIC",
+        device_info::DeviceType::Fpga => "FPGA",
+        device_info::DeviceType::Unknown => "Unknown",
+    }
+}
+
+fn device_status_label(value: i32) -> &'static str {
+    match enum_value(value, telemetry::DeviceStatus::Unknown) {
+        telemetry::DeviceStatus::Idle => "idle",
+        telemetry::DeviceStatus::Mining => "mining",
+        telemetry::DeviceStatus::Error => "error",
+        telemetry::DeviceStatus::ThermalThrottling => "thermal-throttling",
+        telemetry::DeviceStatus::PowerThrottling => "power-throttling",
+        telemetry::DeviceStatus::Offline => "offline",
+        telemetry::DeviceStatus::Unknown => "unknown",
+    }
+}
+
+fn command_status_label(value: i32) -> &'static str {
+    match enum_value(value, command_response::Status::Unknown) {
+        command_response::Status::Success => "SUCCESS",
+        command_response::Status::Error => "ERROR",
+        command_response::Status::Timeout => "TIMEOUT",
+        command_response::Status::PartialSuccess => "PARTIAL SUCCESS",
+        command_response::Status::Unknown => "UNKNOWN",
+    }
+}
+
+fn health_status_label(value: i32) -> &'static str {
+    match enum_value(value, health_check_response::HealthStatus::HealthUnknown) {
+        health_check_response::HealthStatus::HealthHealthy => "HEALTHY",
+        health_check_response::HealthStatus::HealthDegraded => "DEGRADED",
+        health_check_response::HealthStatus::HealthUnhealthy => "UNHEALTHY",
+        health_check_response::HealthStatus::HealthUnknown => "UNKNOWN",
+    }
+}
+
+fn enum_value<T>(value: i32, default_value: T) -> T
+where
+    T: TryFrom<i32>,
+{
+    T::try_from(value).unwrap_or(default_value)
+}
+
+fn format_timestamp(timestamp: Option<&prost_types::Timestamp>) -> Option<String> {
+    let timestamp = timestamp?;
+    let nanos = u32::try_from(timestamp.nanos).ok()?;
+    chrono::DateTime::from_timestamp(timestamp.seconds, nanos)
+        .map(|datetime| datetime.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_pool_endpoint_accepts_host_port() {
+        let (host, port) = parse_pool_endpoint("pool.example.com:3333").unwrap();
+
+        assert_eq!(host, "pool.example.com");
+        assert_eq!(port, 3333);
+    }
+
+    #[test]
+    fn parse_pool_endpoint_accepts_scheme_host_port() {
+        let (host, port) = parse_pool_endpoint("stratum+tcp://pool.example.com:4444").unwrap();
+
+        assert_eq!(host, "stratum+tcp://pool.example.com");
+        assert_eq!(port, 4444);
+    }
+
+    #[test]
+    fn parse_pool_endpoint_rejects_missing_port() {
+        let error = parse_pool_endpoint("pool.example.com").unwrap_err();
+
+        assert!(error.to_string().contains("must include a port"));
+    }
+
+    #[test]
+    fn parse_extra_params_requires_key_value_pairs() {
+        let params = parse_extra_params(vec!["rig=alpha".to_string()]).unwrap();
+
+        assert_eq!(params.get("rig").map(String::as_str), Some("alpha"));
+        assert!(parse_extra_params(vec!["rig".to_string()]).is_err());
+    }
 }
