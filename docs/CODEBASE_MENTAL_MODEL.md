@@ -134,7 +134,7 @@ Active product path:
 
 Product blockers:
 
-- No real XMRig start-to-telemetry validation evidence with a trusted manifest entry and binary.
+- No live XMRig pool/session/share validation with an approved pool and wallet.
 - No curated production manifest/release evidence for supported miner archives.
 - Mining state is not persisted and reconciled after daemon restart.
 - Local dashboard is not yet a complete operator workflow.

@@ -319,31 +319,39 @@ impl MinerAdapter for XMRigAdapter {
     fn build_args(&self, config: &Config, device_ids: &[String]) -> Result<Vec<String>> {
         let wallet = config.get_active_wallet()?;
         let pool = config.get_active_pool()?;
+        let print_time_seconds = xmrig_print_time_seconds(&config.mining.extra_params)?;
+        let benchmark = xmrig_benchmark(&config.mining.extra_params)?;
 
-        let mut args = vec![
-            "-o".to_string(),
-            build_pool_endpoint(pool, "tls"),
-            "-u".to_string(),
-            wallet.address.clone(),
-        ];
+        let mut args = Vec::new();
 
-        // Worker name (password field in XMRig)
-        if let Some(worker) = &pool.worker_name {
-            args.push("-p".to_string());
-            args.push(worker.clone());
-        }
+        if let Some(benchmark) = benchmark {
+            args.push(format!("--bench={benchmark}"));
+        } else {
+            args.extend([
+                "-o".to_string(),
+                build_pool_endpoint(pool, "tls"),
+                "-u".to_string(),
+                wallet.address.clone(),
+            ]);
 
-        // Algorithm selection
-        match wallet.coin.as_str() {
-            "monero" => {
-                args.push("-a".to_string());
-                args.push("rx/0".to_string());
+            // Worker name (password field in XMRig)
+            if let Some(worker) = &pool.worker_name {
+                args.push("-p".to_string());
+                args.push(worker.clone());
             }
-            "wownero" => {
-                args.push("-a".to_string());
-                args.push("rx/wow".to_string());
+
+            // Algorithm selection
+            match wallet.coin.as_str() {
+                "monero" => {
+                    args.push("-a".to_string());
+                    args.push("rx/0".to_string());
+                }
+                "wownero" => {
+                    args.push("-a".to_string());
+                    args.push("rx/wow".to_string());
+                }
+                _ => return Err(anyhow!("Unsupported coin for XMRig: {}", wallet.coin)),
             }
-            _ => return Err(anyhow!("Unsupported coin for XMRig: {}", wallet.coin)),
         }
 
         // Device selection (CPU threads)
@@ -356,9 +364,7 @@ impl MinerAdapter for XMRigAdapter {
 
         // Additional flags
         args.push("--no-color".to_string()); // Disable colors for parsing
-        args.push("--print-time=60".to_string()); // Status every minute
-        args.push("--http-enabled".to_string());
-        args.push("--http-port=0".to_string()); // Disable HTTP API
+        args.push(format!("--print-time={print_time_seconds}"));
 
         Ok(args)
     }
@@ -972,6 +978,36 @@ fn build_pool_endpoint(pool: &crate::config::PoolConfig, secure_scheme: &str) ->
     }
 }
 
+fn xmrig_print_time_seconds(extra_params: &HashMap<String, String>) -> Result<u32> {
+    let Some(value) = extra_params.get("print_time_seconds") else {
+        return Ok(60);
+    };
+
+    let parsed = value
+        .parse::<u32>()
+        .context("print_time_seconds must be a whole number")?;
+    if !(1..=3600).contains(&parsed) {
+        return Err(anyhow!("print_time_seconds must be between 1 and 3600"));
+    }
+
+    Ok(parsed)
+}
+
+fn xmrig_benchmark(extra_params: &HashMap<String, String>) -> Result<Option<String>> {
+    let Some(value) = extra_params.get("xmrig_benchmark") else {
+        return Ok(None);
+    };
+    let benchmark = value.trim().to_ascii_uppercase();
+
+    if matches!(benchmark.as_str(), "1M" | "10M") {
+        return Ok(Some(benchmark));
+    }
+
+    Err(anyhow!(
+        "xmrig_benchmark supports only bounded diagnostic values: 1M or 10M"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1094,6 +1130,50 @@ mod tests {
         assert!(args.contains(&"-t".to_string()));
         assert!(args.contains(&"8".to_string()));
         assert!(args.contains(&"pool.minexmr.com:4444".to_string()));
+        assert!(args.contains(&"--print-time=60".to_string()));
+        assert!(!args.contains(&"--http-enabled".to_string()));
+    }
+
+    #[test]
+    fn test_xmrig_diagnostic_benchmark_args_are_bounded() {
+        let mut config = Config::default();
+        config.mining.active_coin = "monero".to_string();
+        config.mining.active_wallet = "monero_main".to_string();
+        config.mining.active_pool = "minexmr".to_string();
+        config
+            .mining
+            .extra_params
+            .insert("xmrig_benchmark".to_string(), "1m".to_string());
+        config
+            .mining
+            .extra_params
+            .insert("print_time_seconds".to_string(), "1".to_string());
+
+        let adapter = XMRigAdapter::new();
+        let args = adapter.build_args(&config, &["1".to_string()]).unwrap();
+
+        assert!(args.contains(&"--bench=1M".to_string()));
+        assert!(args.contains(&"--print-time=1".to_string()));
+        assert!(args.contains(&"-t".to_string()));
+        assert!(args.contains(&"1".to_string()));
+        assert!(!args.contains(&"-o".to_string()));
+    }
+
+    #[test]
+    fn test_xmrig_rejects_unbounded_benchmark_values() {
+        let mut config = Config::default();
+        config.mining.active_coin = "monero".to_string();
+        config.mining.active_wallet = "monero_main".to_string();
+        config.mining.active_pool = "minexmr".to_string();
+        config
+            .mining
+            .extra_params
+            .insert("xmrig_benchmark".to_string(), "100M".to_string());
+
+        let adapter = XMRigAdapter::new();
+        let error = adapter.build_args(&config, &[]).unwrap_err();
+
+        assert!(error.to_string().contains("xmrig_benchmark supports"));
     }
 
     #[test]

@@ -408,12 +408,12 @@ async fn watch_command(
             .unwrap_or_else(|| "shares unavailable".to_string());
 
         println!(
-            "[{}] device={} status={} algorithm={} hashrate={:.2} MH/s power={}W temp={}C fan={} util={} mem_util={} {} pool={}",
+            "[{}] device={} status={} algorithm={} hashrate={} power={}W temp={}C fan={} util={} mem_util={} {} pool={}",
             timestamp,
             telemetry.device_id,
             device_status_label(telemetry.device_status),
             telemetry.algorithm,
-            telemetry.hashrate_mhs,
+            format_hashrate(telemetry.hashrate_mhs),
             telemetry.power_watts,
             telemetry.temperature_celsius,
             telemetry.fan_speed_percent,
@@ -768,6 +768,18 @@ fn command_status_label(value: i32) -> &'static str {
     }
 }
 
+fn format_hashrate(hashrate_mhs: f64) -> String {
+    let hashrate_hs = hashrate_mhs * 1_000_000.0;
+
+    if hashrate_hs < 1_000.0 {
+        format!("{hashrate_hs:.2} H/s")
+    } else if hashrate_hs < 1_000_000.0 {
+        format!("{:.2} kH/s", hashrate_hs / 1_000.0)
+    } else {
+        format!("{:.2} MH/s", hashrate_hs / 1_000_000.0)
+    }
+}
+
 fn health_status_label(value: i32) -> &'static str {
     match enum_value(value, health_check_response::HealthStatus::HealthUnknown) {
         health_check_response::HealthStatus::HealthHealthy => "HEALTHY",
@@ -850,5 +862,12 @@ mod tests {
             }
             _ => panic!("expected miner install command"),
         }
+    }
+
+    #[test]
+    fn formats_low_cpu_hashrate_without_rounding_to_zero() {
+        assert_eq!(format_hashrate(0.000012), "12.00 H/s");
+        assert_eq!(format_hashrate(0.012), "12.00 kH/s");
+        assert_eq!(format_hashrate(12.0), "12.00 MH/s");
     }
 }

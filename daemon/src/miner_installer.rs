@@ -99,6 +99,7 @@ impl MinerInstaller {
         if target_path.exists() {
             let existing_sha256 = sha256_file(&target_path).await?;
             if existing_sha256 == expected_executable_sha256 {
+                write_checksum_sidecar(&target_path, &existing_sha256)?;
                 return Ok(MinerInstallResult {
                     name: entry.name.clone(),
                     version: entry.version.clone(),
@@ -139,6 +140,7 @@ impl MinerInstaller {
 
         set_executable_permissions(&staged_path)?;
         replace_executable(&staged_path, &target_path, force)?;
+        write_checksum_sidecar(&target_path, &actual_executable_sha256)?;
 
         info!(
             "Installed verified miner {} {} to {}",
@@ -234,6 +236,26 @@ fn validate_archive_source(entry: &MinerManifestEntry) -> Result<()> {
             entry.source_url
         );
     }
+
+    Ok(())
+}
+
+fn write_checksum_sidecar(executable_path: &Path, sha256: &str) -> Result<()> {
+    let sidecar_path = executable_path.with_extension("sha256");
+    let temp_path = sidecar_path.with_extension(format!("sha256.tmp-{}", Uuid::new_v4()));
+    let file_name = executable_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("miner-executable");
+
+    fs::write(&temp_path, format!("{sha256}  {file_name}\n"))
+        .with_context(|| format!("Failed to write checksum sidecar {}", temp_path.display()))?;
+    fs::rename(&temp_path, &sidecar_path).with_context(|| {
+        format!(
+            "Failed to move checksum sidecar into {}",
+            sidecar_path.display()
+        )
+    })?;
 
     Ok(())
 }
@@ -431,6 +453,13 @@ mod tests {
         assert_eq!(
             fs::read(result.executable_path).unwrap(),
             executable_contents
+        );
+        assert_eq!(
+            fs::read_to_string(temp_dir.path().join("binaries/xmrig/xmrig.sha256"))
+                .unwrap()
+                .split_whitespace()
+                .next(),
+            Some(result.executable_sha256.as_str())
         );
     }
 

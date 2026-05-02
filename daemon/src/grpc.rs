@@ -821,7 +821,45 @@ fn apply_grpc_mining_config(
         }
     }
 
+    validate_extra_params(&grpc_config.extra_params)?;
+    config.mining.extra_params = grpc_config.extra_params;
+
     Ok(grpc_config.target_device_ids)
+}
+
+fn validate_extra_params(
+    extra_params: &HashMap<String, String>,
+) -> std::result::Result<(), String> {
+    if extra_params.len() > 16 {
+        return Err("extra_params may contain at most 16 entries".to_string());
+    }
+
+    for (key, value) in extra_params {
+        if key.is_empty() || key.len() > 64 {
+            return Err("extra_params keys must be 1-64 characters".to_string());
+        }
+        if !key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        {
+            return Err(
+                "extra_params keys may only contain ASCII letters, numbers, dots, underscores, and hyphens"
+                    .to_string(),
+            );
+        }
+        if value.len() > 256 {
+            return Err(format!(
+                "extra_params value for '{key}' must be at most 256 characters"
+            ));
+        }
+        if value.chars().any(char::is_control) {
+            return Err(format!(
+                "extra_params value for '{key}' must not contain control characters"
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn infer_coin_from_algorithm(algorithm: &str) -> Option<&'static str> {

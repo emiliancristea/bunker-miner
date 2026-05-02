@@ -88,11 +88,12 @@ signature_url = "https://example.com/xmrig.zip.sig"
 - Workspace gates pass with strict warnings.
 - Unit tests validate manifest parsing, archive/executable hash matching, safe zip extraction, no-force replacement guards, pool endpoint normalization, config readiness, and telemetry parsing.
 - Service smoke starts daemon with non-interactive config, calls CLI health, and verifies missing miner returns `MINER_BINARY_UNAVAILABLE`.
-- Real miner validation runs XMRig through daemon + CLI with a trusted binary and captures start, telemetry, stop, and restart behavior.
+- Real miner validation runs XMRig through daemon + CLI with a trusted binary and captures start, nonzero telemetry, and stop behavior.
+- Live pool validation runs XMRig against an approved pool/wallet pair and captures pool connection/share state.
 
 ## Release Blockers
 
-- No real XMRig start-to-telemetry validation evidence.
+- No live pool/session/share validation with an approved pool and wallet.
 - No curated production manifest/release evidence for supported miner archives.
 - No persistent mining state recovery after daemon restart.
 - No local UI workflow backed entirely by daemon state.

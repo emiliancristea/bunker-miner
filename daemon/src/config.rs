@@ -122,6 +122,8 @@ pub struct MiningConfig {
     pub auto_switch: bool,
     pub profit_switch_interval_minutes: u32,
     pub backup_pools: Vec<String>,
+    #[serde(default)]
+    pub extra_params: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -278,6 +280,7 @@ impl Default for Config {
                 auto_switch: true,                          // Enable profit switching by default
                 profit_switch_interval_minutes: 10,
                 backup_pools: vec!["bunker_pool_eth".to_string(), "ethermine".to_string()],
+                extra_params: HashMap::new(),
             },
             wallets,
             pools,
