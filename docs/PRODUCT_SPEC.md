@@ -2,13 +2,15 @@
 
 Status: Canonical product target  
 Version: 1.0  
-Last updated: 2026-05-01
+Last updated: 2026-05-02
 
 ## 1. Purpose
 
 BUNKER MINER is a secure mining management platform for operators who need local rig control, hardware telemetry, profitability-aware miner orchestration, and optional fleet management. The product manages third-party mining software; it is not itself a proof-of-work implementation unless a future adapter explicitly embeds one.
 
 This specification is the source of truth for bringing the repository from prototype state to product-grade state. Historical phase reports and roadmap documents are informative only; a feature is product-ready only when it satisfies the acceptance gates in this document.
+
+Execution tracking lives in [PRODUCT_IMPLEMENTATION_TRACKER.md](PRODUCT_IMPLEMENTATION_TRACKER.md). Focused engineering requirements for the first release target live in [specs/LOCAL_MINER_MVP.md](specs/LOCAL_MINER_MVP.md). Codebase orientation lives in [CODEBASE_MENTAL_MODEL.md](CODEBASE_MENTAL_MODEL.md).
 
 ## 2. Product Definition
 
@@ -75,7 +77,7 @@ Current status: the enforced Rust workspace has reached Level 1 for the promoted
 - Local UI/CLI reflects real daemon state.
 - Security defaults are acceptable for local-only operation.
 
-Current miner binary policy: daemon execution is fail-closed. A miner executable must be discovered from the managed binary directory, `BUNKER_MINERS_PATH`, `BUNKER_MINER_<MINER>_PATH`, or `PATH`, and it must have a trusted SHA-256 from a sidecar `.sha256` file, `BUNKER_MINER_<MINER>_SHA256`, or a future signed built-in manifest. `BUNKER_MINER_ALLOW_UNVERIFIED_MINERS=1` is a development-only escape hatch and is not acceptable for release builds.
+Current miner binary policy: daemon execution is fail-closed. A miner executable must be discovered from the managed binary directory, `BUNKER_MINERS_PATH`, `BUNKER_MINER_<MINER>_PATH`, or `PATH`, and it must have a trusted SHA-256 from a sidecar `.sha256` file, `BUNKER_MINER_<MINER>_SHA256`, `BUNKER_MINER_MANIFEST_PATH`, or managed `miner-manifest.toml`. `BUNKER_MINER_ALLOW_UNVERIFIED_MINERS=1` is a development-only escape hatch and is not acceptable for release builds.
 
 Current local service policy: daemon configuration can be bootstrapped non-interactively with `BUNKER_MINER_CONFIG_DIR` plus either `BUNKER_MINER_CONFIG_PASSWORD` or `BUNKER_MINER_CONFIG_PASSWORD_FILE`. Configuration templates may contain placeholder wallets, but mining operations must reject placeholder wallets and unavailable/untrusted miner binaries.
 
@@ -594,17 +596,16 @@ Exit criteria:
 
 ## 16. Current Repository Gap Summary
 
-The current repository is not product-grade because:
+The current repository is not product-grade because the Level 2 local miner workflow is not complete end to end:
 
-- Core Rust services do not compile consistently.
-- CI assumes a root workspace that does not exist.
-- Daemon mining control methods are placeholders.
-- Secure miner download and verification are TODOs.
-- Hardware tuning paths are incomplete and mismatched with the device model.
-- Pool share validation and Stratum paths are placeholders or broken.
-- Fleet controller has compile, SQLx, CORS, default credential, and secret-management issues.
-- Integration tests include dummy pass behavior.
-- Documentation overstates completion and production readiness.
+- Verified miner binary installation/acquisition is not implemented.
+- Real XMRig start-to-telemetry validation has not been completed with a trusted binary.
+- Mining state is not yet persisted and reconciled after daemon restart.
+- Local web UI is not yet a complete operator workflow backed entirely by daemon state.
+- CI parity for the enforced local gates is not yet confirmed.
+- Hardware telemetry and safety policies need release-grade validation.
+- Fleet, pool, and PoC crates remain quarantined outside product claims.
+- Documentation must continue to be updated as tracker items move to `done`.
 
 These gaps must be treated as release blockers, not polish items.
 

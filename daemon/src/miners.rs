@@ -18,6 +18,7 @@ use tokio::time::{sleep, timeout};
 use tracing::{debug, error, info, warn};
 
 use crate::config::{Config, CONFIG_DIR_ENV};
+use crate::miner_manifest;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Telemetry {
@@ -254,7 +255,7 @@ impl MinerAdapter for LolMinerAdapter {
 
     async fn download_binary(&self, download_dir: &Path) -> Result<PathBuf> {
         Err(anyhow!(
-            "Automatic download for {} is disabled until signed release manifests are implemented; install it under {} manually",
+            "Automatic download for {} is disabled until verified archive acquisition is implemented; install it under {} manually and provide a trusted checksum",
             self.binary_info.name,
             download_dir.display()
         ))
@@ -436,7 +437,7 @@ impl MinerAdapter for XMRigAdapter {
 
     async fn download_binary(&self, download_dir: &Path) -> Result<PathBuf> {
         Err(anyhow!(
-            "Automatic download for {} is disabled until signed release manifests are implemented; install it under {} manually",
+            "Automatic download for {} is disabled until verified archive acquisition is implemented; install it under {} manually and provide a trusted checksum",
             self.binary_info.name,
             download_dir.display()
         ))
@@ -526,7 +527,7 @@ impl MinerManager {
         fs::create_dir_all(&binary_dir).context("Failed to create binary directory")?;
 
         Err(anyhow!(
-            "{} binary is not installed with a trusted checksum. Automatic miner downloads are disabled until signed release manifest support is implemented. Install the miner manually under {}, set BUNKER_MINERS_PATH or BUNKER_MINER_{}_PATH, and provide a SHA-256 via sidecar .sha256 or BUNKER_MINER_{}_SHA256. Verification attempts: {}",
+            "{} binary is not installed with a trusted checksum. Automatic miner downloads are disabled until verified archive acquisition is implemented. Install the miner manually under {}, set BUNKER_MINERS_PATH or BUNKER_MINER_{}_PATH, and provide a SHA-256 via sidecar .sha256, BUNKER_MINER_{}_SHA256, BUNKER_MINER_MANIFEST_PATH, or managed miner-manifest.toml. Verification attempts: {}",
             binary_info.name,
             binary_dir.display(),
             miner_env_key(&binary_info.name),
@@ -591,7 +592,7 @@ async fn verify_miner_executable(binary_path: &Path, binary_info: &MinerBinary) 
         }
 
         return Err(anyhow!(
-            "No trusted SHA-256 checksum is configured for {}. Provide {}.sha256, BUNKER_MINER_{}_SHA256, or a built-in manifest checksum.",
+            "No trusted SHA-256 checksum is configured for {}. Provide {}.sha256, BUNKER_MINER_{}_SHA256, BUNKER_MINER_MANIFEST_PATH, or managed miner-manifest.toml.",
             binary_path.display(),
             binary_path.display(),
             miner_env_key(&binary_info.name)
@@ -641,6 +642,14 @@ fn expected_sha256(binary_path: &Path, binary_info: &MinerBinary) -> Result<Opti
             )
         })?;
         return Ok(Some(parse_sha256_value(&sidecar)?));
+    }
+
+    if let Some(manifest_sha256) = miner_manifest::trusted_sha256_for_binary(
+        &binary_info.name,
+        &binary_info.version,
+        &binary_executable_name(binary_info),
+    )? {
+        return Ok(Some(manifest_sha256));
     }
 
     if is_valid_sha256(&binary_info.checksum_sha256) {

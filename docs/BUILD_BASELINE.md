@@ -1,7 +1,7 @@
 # Build Baseline
 
 Status: active baseline  
-Last updated: 2026-05-01
+Last updated: 2026-05-02
 
 This document records what is currently enforced by the root Rust workspace. It exists to prevent the project from confusing aspirational components with release-ready components.
 
@@ -57,7 +57,7 @@ A quarantined crate can be promoted into the root workspace when:
 
 The daemon is now part of the enforced workspace. The promoted baseline includes real process lifecycle wiring for `StartMining`/`StopMining`, protobuf API alignment, warning-free strict checks, and daemon integration tests.
 
-Automatic third-party miner downloads remain disabled until signed release manifest support and archive extraction are implemented. If a miner binary is missing or lacks a trusted SHA-256, daemon startup fails with an explicit installation error instead of reporting fake success.
+Automatic third-party miner downloads remain disabled until verified archive acquisition and extraction are implemented. If a miner binary is missing or lacks a trusted SHA-256 from sidecar, environment, or manifest, daemon startup fails with an explicit installation error instead of reporting fake success.
 
 Daemon service startup now supports non-interactive configuration through `BUNKER_MINER_CONFIG_DIR`, `BUNKER_MINER_CONFIG_PASSWORD`, and `BUNKER_MINER_CONFIG_PASSWORD_FILE`. Fresh encrypted config templates may contain placeholder wallets, but mining startup still rejects placeholder wallets.
 

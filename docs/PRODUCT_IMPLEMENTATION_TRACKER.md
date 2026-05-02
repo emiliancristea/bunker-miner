@@ -1,0 +1,69 @@
+# Product Implementation Tracker
+
+Status: active execution tracker  
+Last updated: 2026-05-02
+
+This tracker converts `docs/PRODUCT_SPEC.md` into durable implementation units. A unit is complete only when code, tests, docs, and release evidence all match the acceptance criteria. Historical phase documents are not evidence unless the current workspace gates still prove them.
+
+## Status Legend
+
+- `done`: implemented, tested, documented, and included in the enforced workspace.
+- `active`: current implementation target.
+- `blocked`: cannot proceed until a named dependency is done.
+- `planned`: accepted product work, not currently implemented.
+- `quarantined`: outside release claims until promoted into the enforced workspace.
+
+## Level 2: Local Miner MVP
+
+| ID | Area | Status | Acceptance Gate | Evidence / Next Step |
+| --- | --- | --- | --- | --- |
+| LM-001 | Root Rust workspace gates | done | `fmt`, `check`, `test`, `clippy -D warnings` pass for enforced crates | See `docs/BUILD_BASELINE.md` |
+| LM-002 | Daemon gRPC lifecycle | done | `StartMining`/`StopMining` use real process supervision and typed errors | Daemon workspace tests and CLI smoke evidence |
+| LM-003 | CLI control surface | done | CLI compiles in workspace and builds real daemon requests | `tools/bunker-miner-cli` promoted |
+| LM-004 | Non-interactive daemon service startup | done | Daemon can run with env/file supplied config secret and isolated config dir | `BUNKER_MINER_CONFIG_DIR`, `BUNKER_MINER_CONFIG_PASSWORD`, `BUNKER_MINER_CONFIG_PASSWORD_FILE` |
+| LM-005 | Trusted miner manifest model | done | Manifest schema validates platform, miner identity, executable name, source URL, and SHA-256 | Implemented `daemon::miner_manifest`; checksum trust is wired into miner verification |
+| LM-006 | Miner binary install/acquire workflow | planned | User can install a supported miner into managed storage with verified checksum and no shell execution | Depends on LM-005 |
+| LM-007 | Real XMRig start-to-telemetry validation | blocked | Verified XMRig launches, emits telemetry, and stops cleanly through daemon + CLI | Depends on LM-006 and a licensed test fixture or user-provided binary |
+| LM-008 | Miner crash recovery | planned | Crashes are classified, restart policy is enforced, and final state is observable | Needs integration harness |
+| LM-009 | Mining state API | planned | API exposes idle/starting/running/stopping/error state with active config and process health | Required before UI claims |
+| LM-010 | Config validation/apply workflow | planned | Config validate/set is atomic and secrets are redacted in exports/logs | Current gRPC set path needs schema validation |
+| LM-011 | Local web dashboard operator flow | planned | Dashboard reads daemon state and performs start/stop with real pending/error states | No mock success allowed |
+
+## Level 3: Safety, Benchmarking, Profit
+
+| ID | Area | Status | Acceptance Gate | Evidence / Next Step |
+| --- | --- | --- | --- | --- |
+| SBP-001 | Stable device model | planned | Device IDs and capabilities survive daemon restart where hardware permits | Requires persistence design |
+| SBP-002 | NVIDIA telemetry validation | planned | NVML metrics have hardware-backed tests or recorded validation evidence | Current detection works locally, not release evidence |
+| SBP-003 | CPU telemetry validation | planned | CPU telemetry is real and separated from GPU-only fields | Requires model cleanup |
+| SBP-004 | AMD availability policy | planned | AMD paths are either validated or explicitly unavailable in API/UI | No placeholder support claims |
+| SBP-005 | Benchmark lifecycle | planned | Warmup, measurement, cooldown, persisted result, and cancellation | Existing benchmarking needs product gate |
+| SBP-006 | Safety policy | planned | Emergency stop and unsupported controls are tested | OC/power engines remain disabled by default |
+| SBP-007 | Profit recommendations | planned | Recommendations cite stored benchmark and market inputs | Current profit data is not release-grade |
+| SBP-008 | Auto-switching | blocked | Opt-in hysteresis and rollback are audited | Depends on SBP-005 and SBP-007 |
+
+## Level 4: Release and Operations
+
+| ID | Area | Status | Acceptance Gate | Evidence / Next Step |
+| --- | --- | --- | --- | --- |
+| REL-001 | CI parity | planned | GitHub CI runs the same enforced workspace gates | Local gates are defined; CI must mirror them |
+| REL-002 | Packaging | planned | Signed installers or release archives with checksums | Requires stable MVP workflow |
+| REL-003 | Dependency audit | planned | Audit, license, and secret scans block release | Add release branch gates |
+| REL-004 | Support bundle | planned | Logs/config summaries are exported with secret redaction | Requires observability model |
+| REL-005 | Upgrade/rollback | planned | Config migrations and binary rollback are tested | Depends on versioned data model |
+
+## Quarantined Product Tiers
+
+| ID | Area | Status | Acceptance Gate | Evidence / Next Step |
+| --- | --- | --- | --- | --- |
+| FLT-001 | Fleet crate promotion | quarantined | Fleet builds in workspace with no default credentials or SQLx drift | After Local Miner MVP |
+| POOL-001 | Pool crate promotion | quarantined | Pool builds and has correctness tests for Stratum/share validation | Separate product tier |
+| POC-001 | Developer PoC tools | quarantined | Keep excluded unless a named owner and product purpose exists | No release claims |
+
+## Operating Rules
+
+- New implementation work must reference at least one tracker ID.
+- A tracker item cannot move to `done` without tests and documentation.
+- A user-visible feature cannot be claimed in README/release notes unless its tracker item is `done`.
+- Quarantined crates are not product surface.
+- Safety and binary execution changes require fail-closed behavior by default.

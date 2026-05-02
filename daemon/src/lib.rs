@@ -3,6 +3,7 @@ pub mod config;
 pub mod fleet_agent;
 pub mod grpc;
 pub mod hardware;
+pub mod miner_manifest;
 pub mod miners;
 pub mod overclocking;
 pub mod power_tuning;
