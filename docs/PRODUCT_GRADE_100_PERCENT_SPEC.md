@@ -268,18 +268,21 @@ This scope is not achieved by wrapping XMRig alone. It requires measurable, repe
 
 ## Next Implementation Queue
 
+Completed since this spec was created:
+
+- `LM-009` mining state API: daemon `GetMiningState` and CLI `status` now expose lifecycle, redacted active config summary, process restart count, and telemetry availability.
+
 | Order | Work | Why It Is Next |
 | ---: | --- | --- |
-| 1 | `LM-012` live pool/session/share validation | Converts diagnostic XMRig proof into real mining-session proof. |
-| 2 | `LM-009` mining state API | Required for UI, restart reconciliation, support, and product-grade status. |
-| 3 | `LM-008` crash recovery | Real miners fail; product must classify and recover predictably. |
-| 4 | `LM-010` atomic config apply | Operators need safe config changes before release. |
-| 5 | `TRUST-001` curated manifest | Production install cannot depend on ad hoc validation scripts. |
-| 6 | `LM-011` local dashboard workflow | UI cannot claim product readiness until it uses daemon truth. |
-| 7 | `REL-001` CI parity | Local green gates must become enforced remote gates. |
-| 8 | `REL-004` support bundle | Product support needs redacted diagnostics. |
-| 9 | `REL-002` packaging | Users need installable release artifacts. |
-| 10 | `SBP-003` CPU telemetry cleanup | XMRig RandomX is CPU-first; telemetry must model that cleanly. |
+| 1 | `LM-012` live pool/session/share validation | Converts diagnostic XMRig proof into real mining-session proof; final evidence still needs approved pool/wallet. |
+| 2 | `LM-008` crash recovery | Real miners fail; product must classify and recover predictably. |
+| 3 | `LM-010` atomic config apply | Operators need safe config changes before release. |
+| 4 | `TRUST-001` curated manifest | Production install cannot depend on ad hoc validation scripts. |
+| 5 | `LM-011` local dashboard workflow | UI cannot claim product readiness until it uses daemon truth. |
+| 6 | `REL-001` CI parity | Local green gates must become enforced remote gates. |
+| 7 | `REL-004` support bundle | Product support needs redacted diagnostics. |
+| 8 | `REL-002` packaging | Users need installable release artifacts. |
+| 9 | `SBP-003` CPU telemetry cleanup | XMRig RandomX is CPU-first; telemetry must model that cleanly. |
 
 ## Readiness Scoring Rules
 

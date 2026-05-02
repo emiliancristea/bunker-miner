@@ -811,7 +811,7 @@ fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
     deduped
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessStatus {
     Starting,
     Running,
@@ -1042,6 +1042,14 @@ impl ProcessSupervisor {
 
     pub fn device_ids(&self) -> &[String] {
         &self.device_ids
+    }
+
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
+    pub fn miner_name(&self) -> &str {
+        self.adapter.get_name()
     }
 
     pub fn get_restart_count(&self) -> u32 {

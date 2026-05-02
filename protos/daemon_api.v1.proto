@@ -522,6 +522,38 @@ message InstallMinerResponse {
   uint32 execution_duration_ms = 6;
 }
 
+// Current daemon-owned mining lifecycle state
+message MiningStateResponse {
+  enum LifecycleState {
+    MINING_LIFECYCLE_STATE_UNKNOWN = 0;
+    MINING_LIFECYCLE_STATE_IDLE = 1;
+    MINING_LIFECYCLE_STATE_INSTALLING = 2;
+    MINING_LIFECYCLE_STATE_STARTING = 3;
+    MINING_LIFECYCLE_STATE_RUNNING = 4;
+    MINING_LIFECYCLE_STATE_STOPPING = 5;
+    MINING_LIFECYCLE_STATE_STOPPED = 6;
+    MINING_LIFECYCLE_STATE_ERROR = 7;
+    MINING_LIFECYCLE_STATE_CRASHED = 8;
+    MINING_LIFECYCLE_STATE_RESTARTING = 9;
+    MINING_LIFECYCLE_STATE_DEGRADED = 10;
+  }
+
+  LifecycleState state = 1;
+  string status_message = 2;
+  string miner_name = 3;
+  string active_coin = 4;
+  string algorithm = 5;
+  string pool_url = 6;
+  string wallet_label = 7;
+  string wallet_address_redacted = 8;
+  repeated string target_device_ids = 9;
+  uint32 restart_count = 10;
+  bool telemetry_available = 11;
+  Telemetry latest_telemetry = 12;
+  CommandResponse.ErrorDetails error_details = 13;
+  google.protobuf.Timestamp timestamp = 14;
+}
+
 // Generic command response
 message CommandResponse {
   // Command execution status
@@ -679,6 +711,12 @@ service BunkerMinerDaemon {
   rpc StopMining(StopMiningRequest) returns (CommandResponse) {
     // Security: State-changing operation, requires authentication for remote access
     // Rate Limit: 5 requests/second per client
+  }
+
+  // Get daemon-owned mining lifecycle and active configuration summary
+  rpc GetMiningState(google.protobuf.Empty) returns (MiningStateResponse) {
+    // Security: Read-only operation, redacts sensitive wallet/account values
+    // Rate Limit: 10 requests/second per client
   }
 
   // Install a miner binary through manifest-backed archive verification

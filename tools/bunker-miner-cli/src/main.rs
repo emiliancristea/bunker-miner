@@ -40,6 +40,7 @@ struct Cli {
 enum Commands {
     Info,
     Health,
+    Status,
     Start(StartArgs),
     Stop(StopArgs),
     Miner(MinerArgs),
@@ -188,6 +189,7 @@ async fn main() -> Result<()> {
     match command {
         Commands::Info => info_command(&mut client).await?,
         Commands::Health => health_command(&mut client).await?,
+        Commands::Status => status_command(&mut client).await?,
         Commands::Start(args) => start_command(&mut client, args).await?,
         Commands::Stop(args) => stop_command(&mut client, args).await?,
         Commands::Miner(args) => miner_command(&mut client, args).await?,
@@ -286,6 +288,96 @@ async fn health_command(client: &mut BunkerMinerDaemonClient<Channel>) -> Result
     if let Some(timestamp) = format_timestamp(response.timestamp.as_ref()) {
         println!();
         println!("Check time: {timestamp}");
+    }
+
+    Ok(())
+}
+
+async fn status_command(client: &mut BunkerMinerDaemonClient<Channel>) -> Result<()> {
+    println!("BUNKER MINER - Mining Status");
+    println!("============================");
+
+    let response = client.get_mining_state(()).await?.into_inner();
+
+    println!();
+    println!("State: {}", mining_lifecycle_state_label(response.state));
+    println!("Message: {}", response.status_message);
+
+    if !response.miner_name.is_empty() {
+        println!("Miner: {}", response.miner_name);
+    }
+    if !response.active_coin.is_empty() {
+        println!("Coin: {}", response.active_coin);
+    }
+    if !response.algorithm.is_empty() {
+        println!("Algorithm: {}", response.algorithm);
+    }
+    if !response.pool_url.is_empty() {
+        println!("Pool: {}", response.pool_url);
+    }
+    if !response.wallet_label.is_empty() || !response.wallet_address_redacted.is_empty() {
+        println!(
+            "Wallet: {} {}",
+            response.wallet_label, response.wallet_address_redacted
+        );
+    }
+    if !response.target_device_ids.is_empty() {
+        println!("Devices: {}", response.target_device_ids.join(", "));
+    }
+    println!("Restarts: {}", response.restart_count);
+    println!(
+        "Telemetry: {}",
+        if response.telemetry_available {
+            "available"
+        } else {
+            "unavailable"
+        }
+    );
+
+    if let Some(telemetry) = response.latest_telemetry {
+        let shares = telemetry
+            .shares
+            .as_ref()
+            .map(|shares| {
+                format!(
+                    "accepted={} rejected={} stale={} acceptance={:.1}%",
+                    shares.accepted,
+                    shares.rejected,
+                    shares.stale,
+                    shares.acceptance_rate * 100.0
+                )
+            })
+            .unwrap_or_else(|| "unavailable".to_string());
+
+        println!();
+        println!("Latest Telemetry");
+        println!("  Hashrate: {}", format_hashrate(telemetry.hashrate_mhs));
+        println!(
+            "  Pool Status: {}",
+            pool_status_label(telemetry.pool_status)
+        );
+        if !telemetry.pool_url.is_empty() {
+            println!("  Pool: {}", telemetry.pool_url);
+        }
+        println!("  Shares: {shares}");
+    }
+
+    if let Some(error_details) = response.error_details {
+        println!();
+        println!("Error Details");
+        println!("  Code: {}", error_details.error_code);
+        println!("  Description: {}", error_details.error_description);
+        if !error_details.remediation_steps.is_empty() {
+            println!("  Remediation");
+            for (index, step) in error_details.remediation_steps.iter().enumerate() {
+                println!("    {}. {}", index + 1, step);
+            }
+        }
+    }
+
+    if let Some(timestamp) = format_timestamp(response.timestamp.as_ref()) {
+        println!();
+        println!("Status time: {timestamp}");
     }
 
     Ok(())
@@ -779,6 +871,25 @@ fn pool_status_label(value: i32) -> &'static str {
     }
 }
 
+fn mining_lifecycle_state_label(value: i32) -> &'static str {
+    match enum_value(
+        value,
+        mining_state_response::LifecycleState::MiningLifecycleStateUnknown,
+    ) {
+        mining_state_response::LifecycleState::MiningLifecycleStateIdle => "idle",
+        mining_state_response::LifecycleState::MiningLifecycleStateInstalling => "installing",
+        mining_state_response::LifecycleState::MiningLifecycleStateStarting => "starting",
+        mining_state_response::LifecycleState::MiningLifecycleStateRunning => "running",
+        mining_state_response::LifecycleState::MiningLifecycleStateStopping => "stopping",
+        mining_state_response::LifecycleState::MiningLifecycleStateStopped => "stopped",
+        mining_state_response::LifecycleState::MiningLifecycleStateError => "error",
+        mining_state_response::LifecycleState::MiningLifecycleStateCrashed => "crashed",
+        mining_state_response::LifecycleState::MiningLifecycleStateRestarting => "restarting",
+        mining_state_response::LifecycleState::MiningLifecycleStateDegraded => "degraded",
+        mining_state_response::LifecycleState::MiningLifecycleStateUnknown => "unknown",
+    }
+}
+
 fn format_hashrate(hashrate_mhs: f64) -> String {
     let hashrate_hs = hashrate_mhs * 1_000_000.0;
 
@@ -893,5 +1004,29 @@ mod tests {
             "error"
         );
         assert_eq!(pool_status_label(999), "unknown");
+    }
+
+    #[test]
+    fn cli_parses_status_command() {
+        let cli = Cli::try_parse_from(["bunker-miner-cli", "status"]).unwrap();
+
+        assert!(matches!(cli.command.unwrap(), Commands::Status));
+    }
+
+    #[test]
+    fn formats_mining_lifecycle_state_labels() {
+        assert_eq!(
+            mining_lifecycle_state_label(
+                mining_state_response::LifecycleState::MiningLifecycleStateRunning as i32
+            ),
+            "running"
+        );
+        assert_eq!(
+            mining_lifecycle_state_label(
+                mining_state_response::LifecycleState::MiningLifecycleStateCrashed as i32
+            ),
+            "crashed"
+        );
+        assert_eq!(mining_lifecycle_state_label(999), "unknown");
     }
 }

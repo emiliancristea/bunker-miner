@@ -78,6 +78,7 @@ signature_url = "https://example.com/xmrig.zip.sig"
 ### Operator Surfaces
 
 - CLI and local UI must display daemon state from gRPC.
+- `bunker-miner-cli status` must read `GetMiningState` and display lifecycle, active config summary, restart count, and latest telemetry availability without exposing raw wallet or pool password values.
 - CLI must expose manifest-backed miner installation and return nonzero when daemon installation fails.
 - Start/stop commands must exit nonzero on daemon command failure after printing structured details.
 - Dashboard failure must not take down the daemon control plane.
@@ -88,6 +89,7 @@ signature_url = "https://example.com/xmrig.zip.sig"
 - Workspace gates pass with strict warnings.
 - Unit tests validate manifest parsing, archive/executable hash matching, safe zip extraction, no-force replacement guards, pool endpoint normalization, config readiness, and telemetry parsing.
 - Service smoke starts daemon with non-interactive config, calls CLI health, and verifies missing miner returns `MINER_BINARY_UNAVAILABLE`.
+- State smoke starts daemon with non-interactive config and verifies `bunker-miner-cli status` returns the daemon-owned idle/stopped state.
 - Real miner validation runs XMRig through daemon + CLI with a trusted binary and captures start, nonzero telemetry, and stop behavior.
 - Live pool validation runs XMRig against an approved pool/wallet pair and captures pool connection/share state.
 - `scripts/validate-xmrig-local-miner.ps1 -LivePool <host:port> -LiveWallet <wallet> [-LivePassword <password>]` is the current evidence harness for live XMRig validation; it must not be run with placeholder credentials.

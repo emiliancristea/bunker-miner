@@ -386,7 +386,7 @@ Pool:
 Required outputs:
 
 - Structured logs with component, device ID, miner ID, event type, severity, and correlation ID where applicable.
-- Local status API for current mining state.
+- Local status API for current mining state, implemented as daemon-owned `GetMiningState` plus CLI `status`.
 - Metrics for process uptime, crashes, hashrate, shares, reject rate, telemetry freshness, API latency, and config changes.
 - Audit log for start/stop, config writes, remote commands, optimizer actions, and safety shutdowns.
 - Support bundle export with secret redaction.

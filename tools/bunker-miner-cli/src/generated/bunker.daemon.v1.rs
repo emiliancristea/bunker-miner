@@ -762,6 +762,143 @@ pub struct InstallMinerResponse {
     #[prost(uint32, tag = "6")]
     pub execution_duration_ms: u32,
 }
+/// Current daemon-owned mining lifecycle state
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MiningStateResponse {
+    #[prost(enumeration = "mining_state_response::LifecycleState", tag = "1")]
+    pub state: i32,
+    #[prost(string, tag = "2")]
+    pub status_message: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub miner_name: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub active_coin: ::prost::alloc::string::String,
+    #[prost(string, tag = "5")]
+    pub algorithm: ::prost::alloc::string::String,
+    #[prost(string, tag = "6")]
+    pub pool_url: ::prost::alloc::string::String,
+    #[prost(string, tag = "7")]
+    pub wallet_label: ::prost::alloc::string::String,
+    #[prost(string, tag = "8")]
+    pub wallet_address_redacted: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "9")]
+    pub target_device_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(uint32, tag = "10")]
+    pub restart_count: u32,
+    #[prost(bool, tag = "11")]
+    pub telemetry_available: bool,
+    #[prost(message, optional, tag = "12")]
+    pub latest_telemetry: ::core::option::Option<Telemetry>,
+    #[prost(message, optional, tag = "13")]
+    pub error_details: ::core::option::Option<command_response::ErrorDetails>,
+    #[prost(message, optional, tag = "14")]
+    pub timestamp: ::core::option::Option<::prost_types::Timestamp>,
+}
+/// Nested message and enum types in `MiningStateResponse`.
+pub mod mining_state_response {
+    #[derive(
+        Clone,
+        Copy,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash,
+        PartialOrd,
+        Ord,
+        ::prost::Enumeration
+    )]
+    #[repr(i32)]
+    pub enum LifecycleState {
+        MiningLifecycleStateUnknown = 0,
+        MiningLifecycleStateIdle = 1,
+        MiningLifecycleStateInstalling = 2,
+        MiningLifecycleStateStarting = 3,
+        MiningLifecycleStateRunning = 4,
+        MiningLifecycleStateStopping = 5,
+        MiningLifecycleStateStopped = 6,
+        MiningLifecycleStateError = 7,
+        MiningLifecycleStateCrashed = 8,
+        MiningLifecycleStateRestarting = 9,
+        MiningLifecycleStateDegraded = 10,
+    }
+    impl LifecycleState {
+        /// String value of the enum field names used in the ProtoBuf definition.
+        ///
+        /// The values are not transformed in any way and thus are considered stable
+        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+        pub fn as_str_name(&self) -> &'static str {
+            match self {
+                LifecycleState::MiningLifecycleStateUnknown => {
+                    "MINING_LIFECYCLE_STATE_UNKNOWN"
+                }
+                LifecycleState::MiningLifecycleStateIdle => "MINING_LIFECYCLE_STATE_IDLE",
+                LifecycleState::MiningLifecycleStateInstalling => {
+                    "MINING_LIFECYCLE_STATE_INSTALLING"
+                }
+                LifecycleState::MiningLifecycleStateStarting => {
+                    "MINING_LIFECYCLE_STATE_STARTING"
+                }
+                LifecycleState::MiningLifecycleStateRunning => {
+                    "MINING_LIFECYCLE_STATE_RUNNING"
+                }
+                LifecycleState::MiningLifecycleStateStopping => {
+                    "MINING_LIFECYCLE_STATE_STOPPING"
+                }
+                LifecycleState::MiningLifecycleStateStopped => {
+                    "MINING_LIFECYCLE_STATE_STOPPED"
+                }
+                LifecycleState::MiningLifecycleStateError => {
+                    "MINING_LIFECYCLE_STATE_ERROR"
+                }
+                LifecycleState::MiningLifecycleStateCrashed => {
+                    "MINING_LIFECYCLE_STATE_CRASHED"
+                }
+                LifecycleState::MiningLifecycleStateRestarting => {
+                    "MINING_LIFECYCLE_STATE_RESTARTING"
+                }
+                LifecycleState::MiningLifecycleStateDegraded => {
+                    "MINING_LIFECYCLE_STATE_DEGRADED"
+                }
+            }
+        }
+        /// Creates an enum from field names used in the ProtoBuf definition.
+        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+            match value {
+                "MINING_LIFECYCLE_STATE_UNKNOWN" => {
+                    Some(Self::MiningLifecycleStateUnknown)
+                }
+                "MINING_LIFECYCLE_STATE_IDLE" => Some(Self::MiningLifecycleStateIdle),
+                "MINING_LIFECYCLE_STATE_INSTALLING" => {
+                    Some(Self::MiningLifecycleStateInstalling)
+                }
+                "MINING_LIFECYCLE_STATE_STARTING" => {
+                    Some(Self::MiningLifecycleStateStarting)
+                }
+                "MINING_LIFECYCLE_STATE_RUNNING" => {
+                    Some(Self::MiningLifecycleStateRunning)
+                }
+                "MINING_LIFECYCLE_STATE_STOPPING" => {
+                    Some(Self::MiningLifecycleStateStopping)
+                }
+                "MINING_LIFECYCLE_STATE_STOPPED" => {
+                    Some(Self::MiningLifecycleStateStopped)
+                }
+                "MINING_LIFECYCLE_STATE_ERROR" => Some(Self::MiningLifecycleStateError),
+                "MINING_LIFECYCLE_STATE_CRASHED" => {
+                    Some(Self::MiningLifecycleStateCrashed)
+                }
+                "MINING_LIFECYCLE_STATE_RESTARTING" => {
+                    Some(Self::MiningLifecycleStateRestarting)
+                }
+                "MINING_LIFECYCLE_STATE_DEGRADED" => {
+                    Some(Self::MiningLifecycleStateDegraded)
+                }
+                _ => None,
+            }
+        }
+    }
+}
 /// Generic command response
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1191,6 +1328,37 @@ pub mod bunker_miner_daemon_client {
             req.extensions_mut()
                 .insert(
                     GrpcMethod::new("bunker.daemon.v1.BunkerMinerDaemon", "StopMining"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        /// Get daemon-owned mining lifecycle and active configuration summary
+        pub async fn get_mining_state(
+            &mut self,
+            request: impl tonic::IntoRequest<()>,
+        ) -> std::result::Result<
+            tonic::Response<super::MiningStateResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/bunker.daemon.v1.BunkerMinerDaemon/GetMiningState",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "bunker.daemon.v1.BunkerMinerDaemon",
+                        "GetMiningState",
+                    ),
                 );
             self.inner.unary(req, path, codec).await
         }

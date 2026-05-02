@@ -13,7 +13,7 @@ use tracing::{debug, info, warn};
 use crate::config::{Config, GrpcConfig, PoolConfig, WalletConfig};
 use crate::hardware::{DeviceType as HardwareDeviceType, HardwareDetector, MiningDevice};
 use crate::miner_installer::MinerInstaller;
-use crate::miners::{MinerManager, ProcessSupervisor, Telemetry as MinerTelemetry};
+use crate::miners::{MinerManager, ProcessStatus, ProcessSupervisor, Telemetry as MinerTelemetry};
 use crate::profit_engine::ProfitEngineService;
 
 include!("generated/bunker.daemon.v1.rs");
@@ -30,6 +30,7 @@ pub struct DaemonState {
     pub hardware_detector: RwLock<HardwareDetector>,
     pub miner_manager: RwLock<MinerManager>,
     pub process_supervisors: RwLock<HashMap<String, ProcessSupervisor>>,
+    pub mining_lifecycle: RwLock<MiningLifecycleSnapshot>,
     pub telemetry_broadcaster: TelemetryBroadcaster,
     pub profit_engine_service: Option<Arc<ProfitEngineService>>,
     pub daemon_version: String,
@@ -50,6 +51,7 @@ impl DaemonState {
             hardware_detector: RwLock::new(hardware_detector),
             miner_manager: RwLock::new(miner_manager),
             process_supervisors: RwLock::new(HashMap::new()),
+            mining_lifecycle: RwLock::new(MiningLifecycleSnapshot::idle()),
             telemetry_broadcaster: TelemetryBroadcaster::new(),
             profit_engine_service: None,
             daemon_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -66,6 +68,62 @@ impl DaemonState {
 
     pub fn set_profit_engine(&mut self, profit_service: Arc<ProfitEngineService>) {
         self.profit_engine_service = Some(profit_service);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MiningLifecycleState {
+    Idle,
+    Installing,
+    Starting,
+    Running,
+    Stopping,
+    Stopped,
+    Error,
+    Crashed,
+    Restarting,
+    Degraded,
+}
+
+#[derive(Debug, Clone)]
+pub struct MiningLifecycleSnapshot {
+    pub state: MiningLifecycleState,
+    pub status_message: String,
+    pub error_details: Option<command_response::ErrorDetails>,
+}
+
+impl MiningLifecycleSnapshot {
+    pub fn idle() -> Self {
+        Self::new(MiningLifecycleState::Idle, "No active mining process")
+    }
+
+    pub fn new(state: MiningLifecycleState, status_message: impl Into<String>) -> Self {
+        Self {
+            state,
+            status_message: status_message.into(),
+            error_details: None,
+        }
+    }
+
+    pub fn error(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        remediation_steps: &[&str],
+    ) -> Self {
+        let message = message.into();
+        Self {
+            state: MiningLifecycleState::Error,
+            status_message: message.clone(),
+            error_details: Some(command_response::ErrorDetails {
+                error_code: code.into(),
+                error_description: message,
+                affected_devices: vec![],
+                remediation_steps: remediation_steps
+                    .iter()
+                    .map(|step| step.to_string())
+                    .collect(),
+            }),
+        }
     }
 }
 
@@ -233,8 +291,21 @@ impl BunkerMinerDaemon for BunkerMinerDaemonImpl {
                 )));
             }
 
+            *self.state.mining_lifecycle.write().await = MiningLifecycleSnapshot::new(
+                MiningLifecycleState::Stopping,
+                "Stopping existing miner before replacement",
+            );
             let existing = drain_supervisors(&self.state).await;
-            stop_supervisors(existing, Duration::from_secs(start_timeout)).await?;
+            if let Err(status) =
+                stop_supervisors(existing, Duration::from_secs(start_timeout)).await
+            {
+                *self.state.mining_lifecycle.write().await = MiningLifecycleSnapshot::error(
+                    "STOP_BEFORE_REPLACE_FAILED",
+                    status.message().to_string(),
+                    ["Stop the existing miner manually before retrying"].as_slice(),
+                );
+                return Err(status);
+            }
         }
 
         let mut config = self.state.config.read().await.clone();
@@ -246,16 +317,30 @@ impl BunkerMinerDaemon for BunkerMinerDaemonImpl {
         let miner_device_ids =
             normalize_miner_device_ids(&target_device_ids, &config.mining.active_coin);
 
+        *self.state.mining_lifecycle.write().await = MiningLifecycleSnapshot::new(
+            MiningLifecycleState::Starting,
+            format!("Starting mining for {}", config.mining.active_coin),
+        );
+
         let adapter = {
             let miner_manager = self.state.miner_manager.read().await;
-            miner_manager
-                .get_adapter_for_coin(&config.mining.active_coin)
-                .ok_or_else(|| {
-                    Status::failed_precondition(format!(
+            match miner_manager.get_adapter_for_coin(&config.mining.active_coin) {
+                Some(adapter) => adapter,
+                None => {
+                    *self.state.mining_lifecycle.write().await = MiningLifecycleSnapshot::error(
+                        "MINER_ADAPTER_UNAVAILABLE",
+                        format!(
+                            "No miner adapter available for coin '{}'",
+                            config.mining.active_coin
+                        ),
+                        ["Select a supported coin/algorithm"].as_slice(),
+                    );
+                    return Err(Status::failed_precondition(format!(
                         "No miner adapter available for coin '{}'",
                         config.mining.active_coin
-                    ))
-                })?
+                    )));
+                }
+            }
         };
 
         let binary_path = {
@@ -263,6 +348,16 @@ impl BunkerMinerDaemon for BunkerMinerDaemonImpl {
             match miner_manager.ensure_binary_available(&adapter).await {
                 Ok(binary_path) => binary_path,
                 Err(error) => {
+                    *self.state.mining_lifecycle.write().await = MiningLifecycleSnapshot::error(
+                        "MINER_BINARY_UNAVAILABLE",
+                        error.to_string(),
+                        [
+                            "Run bunker-miner-cli miner install with a trusted manifest entry",
+                            "Or install the selected miner binary manually and provide a trusted SHA-256 sidecar file or environment variable",
+                            "Set BUNKER_MINERS_PATH or BUNKER_MINER_<MINER>_PATH if the binary is outside the managed directory",
+                        ]
+                        .as_slice(),
+                    );
                     return Ok(Response::new(command_error(
                         "MINER_BINARY_UNAVAILABLE",
                         error.to_string(),
@@ -294,6 +389,11 @@ impl BunkerMinerDaemon for BunkerMinerDaemonImpl {
         {
             Ok(Ok(())) => {}
             Ok(Err(error)) => {
+                *self.state.mining_lifecycle.write().await = MiningLifecycleSnapshot::error(
+                    "START_FAILED",
+                    format!("Failed to start miner process: {error}"),
+                    ["Verify miner binary, pool, wallet, and device configuration"].as_slice(),
+                );
                 return Ok(Response::new(command_error(
                     "START_FAILED",
                     format!("Failed to start miner process: {error}"),
@@ -302,6 +402,11 @@ impl BunkerMinerDaemon for BunkerMinerDaemonImpl {
                 )));
             }
             Err(_) => {
+                *self.state.mining_lifecycle.write().await = MiningLifecycleSnapshot::error(
+                    "START_TIMEOUT",
+                    "Timed out while starting miner process",
+                    ["Check miner binary and system load, then retry"].as_slice(),
+                );
                 return Ok(Response::new(command_with_status(
                     command_response::Status::Timeout,
                     "Timed out while starting miner process",
@@ -322,6 +427,15 @@ impl BunkerMinerDaemon for BunkerMinerDaemonImpl {
             .write()
             .await
             .insert("default".to_string(), supervisor);
+
+        *self.state.mining_lifecycle.write().await = MiningLifecycleSnapshot::new(
+            MiningLifecycleState::Running,
+            format!(
+                "Started {} mining for {}",
+                adapter.get_name(),
+                config.mining.active_coin
+            ),
+        );
 
         Ok(Response::new(command_with_status(
             command_response::Status::Success,
@@ -356,12 +470,85 @@ impl BunkerMinerDaemon for BunkerMinerDaemonImpl {
         }
 
         let stopped = selected.len();
-        stop_supervisors(selected, Duration::from_secs(stop_timeout)).await?;
+        *self.state.mining_lifecycle.write().await = MiningLifecycleSnapshot::new(
+            MiningLifecycleState::Stopping,
+            format!("Stopping {stopped} miner process supervisor(s)"),
+        );
+        if let Err(status) = stop_supervisors(selected, Duration::from_secs(stop_timeout)).await {
+            *self.state.mining_lifecycle.write().await = MiningLifecycleSnapshot::error(
+                "STOP_FAILED",
+                status.message().to_string(),
+                ["Retry with --force or inspect daemon logs"].as_slice(),
+            );
+            return Err(status);
+        }
+        *self.state.mining_lifecycle.write().await = MiningLifecycleSnapshot::new(
+            MiningLifecycleState::Stopped,
+            format!("Stopped {stopped} miner process supervisor(s)"),
+        );
 
         Ok(Response::new(command_with_status(
             command_response::Status::Success,
             format!("Stopped {stopped} miner process supervisor(s)"),
             started_at,
+        )))
+    }
+
+    async fn get_mining_state(
+        &self,
+        request: Request<()>,
+    ) -> std::result::Result<Response<MiningStateResponse>, Status> {
+        debug!(
+            "Received GetMiningState request from {:?}",
+            request.remote_addr()
+        );
+
+        let lifecycle = self.state.mining_lifecycle.read().await.clone();
+        let supervisors = self.state.process_supervisors.read().await;
+        if let Some((_key, supervisor)) = supervisors.iter().next() {
+            let latest_telemetry = supervisor.get_latest_telemetry().await;
+            let process_status = *supervisor.get_status();
+            let (state, status_message, error_details) =
+                if lifecycle_overrides_process(lifecycle.state) {
+                    (
+                        mining_lifecycle_to_grpc(lifecycle.state),
+                        lifecycle.status_message,
+                        lifecycle.error_details,
+                    )
+                } else {
+                    (
+                        mining_lifecycle_from_process_status(process_status),
+                        process_status_message(process_status).to_string(),
+                        mining_state_error_details(process_status),
+                    )
+                };
+            let response = mining_state_response(MiningStateResponseInput {
+                state,
+                status_message,
+                miner_name: Some(supervisor.miner_name()),
+                config: supervisor.config(),
+                device_ids: supervisor.device_ids(),
+                restart_count: supervisor.get_restart_count(),
+                latest_telemetry,
+                error_details,
+            });
+
+            return Ok(Response::new(response));
+        }
+        drop(supervisors);
+
+        let config = self.state.config.read().await;
+        Ok(Response::new(mining_state_response(
+            MiningStateResponseInput {
+                state: mining_lifecycle_to_grpc(lifecycle.state),
+                status_message: lifecycle.status_message,
+                miner_name: None,
+                config: &config,
+                device_ids: &[],
+                restart_count: 0,
+                latest_telemetry: None,
+                error_details: lifecycle.error_details,
+            },
         )))
     }
 
@@ -705,6 +892,177 @@ impl BunkerMinerDaemon for BunkerMinerDaemonImpl {
 
 async fn drain_supervisors(state: &DaemonState) -> Vec<(String, ProcessSupervisor)> {
     state.process_supervisors.write().await.drain().collect()
+}
+
+struct MiningStateResponseInput<'a> {
+    state: mining_state_response::LifecycleState,
+    status_message: String,
+    miner_name: Option<&'a str>,
+    config: &'a Config,
+    device_ids: &'a [String],
+    restart_count: u32,
+    latest_telemetry: Option<MinerTelemetry>,
+    error_details: Option<command_response::ErrorDetails>,
+}
+
+fn mining_state_response(input: MiningStateResponseInput<'_>) -> MiningStateResponse {
+    let active_wallet = input.config.get_active_wallet().ok();
+    let active_pool = input.config.get_active_pool().ok();
+    let latest_telemetry = input.latest_telemetry.map(convert_telemetry_to_grpc);
+
+    MiningStateResponse {
+        state: input.state as i32,
+        status_message: input.status_message,
+        miner_name: input.miner_name.unwrap_or_default().to_string(),
+        active_coin: input.config.mining.active_coin.clone(),
+        algorithm: algorithm_for_coin(&input.config.mining.active_coin).to_string(),
+        pool_url: active_pool.map(format_pool_endpoint).unwrap_or_default(),
+        wallet_label: active_wallet
+            .and_then(|wallet| wallet.label.clone())
+            .unwrap_or_else(|| input.config.mining.active_wallet.clone()),
+        wallet_address_redacted: active_wallet
+            .map(|wallet| redact_wallet_address(&wallet.address))
+            .unwrap_or_default(),
+        target_device_ids: input.device_ids.to_vec(),
+        restart_count: input.restart_count,
+        telemetry_available: latest_telemetry.is_some(),
+        latest_telemetry,
+        error_details: input.error_details,
+        timestamp: Some(now_timestamp()),
+    }
+}
+
+fn mining_lifecycle_from_process_status(
+    status: ProcessStatus,
+) -> mining_state_response::LifecycleState {
+    match status {
+        ProcessStatus::Starting => {
+            mining_state_response::LifecycleState::MiningLifecycleStateStarting
+        }
+        ProcessStatus::Running => {
+            mining_state_response::LifecycleState::MiningLifecycleStateRunning
+        }
+        ProcessStatus::Stopped => {
+            mining_state_response::LifecycleState::MiningLifecycleStateStopped
+        }
+        ProcessStatus::Crashed => {
+            mining_state_response::LifecycleState::MiningLifecycleStateCrashed
+        }
+        ProcessStatus::Restarting => {
+            mining_state_response::LifecycleState::MiningLifecycleStateRestarting
+        }
+    }
+}
+
+fn mining_lifecycle_to_grpc(state: MiningLifecycleState) -> mining_state_response::LifecycleState {
+    match state {
+        MiningLifecycleState::Idle => {
+            mining_state_response::LifecycleState::MiningLifecycleStateIdle
+        }
+        MiningLifecycleState::Installing => {
+            mining_state_response::LifecycleState::MiningLifecycleStateInstalling
+        }
+        MiningLifecycleState::Starting => {
+            mining_state_response::LifecycleState::MiningLifecycleStateStarting
+        }
+        MiningLifecycleState::Running => {
+            mining_state_response::LifecycleState::MiningLifecycleStateRunning
+        }
+        MiningLifecycleState::Stopping => {
+            mining_state_response::LifecycleState::MiningLifecycleStateStopping
+        }
+        MiningLifecycleState::Stopped => {
+            mining_state_response::LifecycleState::MiningLifecycleStateStopped
+        }
+        MiningLifecycleState::Error => {
+            mining_state_response::LifecycleState::MiningLifecycleStateError
+        }
+        MiningLifecycleState::Crashed => {
+            mining_state_response::LifecycleState::MiningLifecycleStateCrashed
+        }
+        MiningLifecycleState::Restarting => {
+            mining_state_response::LifecycleState::MiningLifecycleStateRestarting
+        }
+        MiningLifecycleState::Degraded => {
+            mining_state_response::LifecycleState::MiningLifecycleStateDegraded
+        }
+    }
+}
+
+fn lifecycle_overrides_process(state: MiningLifecycleState) -> bool {
+    matches!(
+        state,
+        MiningLifecycleState::Installing
+            | MiningLifecycleState::Starting
+            | MiningLifecycleState::Stopping
+            | MiningLifecycleState::Error
+    )
+}
+
+fn process_status_message(status: ProcessStatus) -> &'static str {
+    match status {
+        ProcessStatus::Starting => "Miner process is starting",
+        ProcessStatus::Running => "Miner process is running",
+        ProcessStatus::Stopped => "Miner process is stopped",
+        ProcessStatus::Crashed => "Miner process crashed",
+        ProcessStatus::Restarting => "Miner process is restarting",
+    }
+}
+
+fn mining_state_error_details(status: ProcessStatus) -> Option<command_response::ErrorDetails> {
+    if status != ProcessStatus::Crashed {
+        return None;
+    }
+
+    Some(command_response::ErrorDetails {
+        error_code: "MINER_PROCESS_CRASHED".to_string(),
+        error_description: "Miner process exited unexpectedly".to_string(),
+        affected_devices: vec![],
+        remediation_steps: vec![
+            "Check pool, wallet, miner binary, and device configuration".to_string(),
+            "Review daemon logs for the miner exit reason".to_string(),
+        ],
+    })
+}
+
+fn algorithm_for_coin(coin: &str) -> &'static str {
+    match coin {
+        "monero" => "randomx",
+        "wownero" => "randomwow",
+        "ethereum" => "ethash",
+        "ethereum_classic" => "etchash",
+        "beam" => "beamhash",
+        _ => "unknown",
+    }
+}
+
+fn format_pool_endpoint(pool: &PoolConfig) -> String {
+    let url = pool.url.trim().trim_end_matches('/');
+    format!("{url}:{}", pool.port)
+}
+
+fn redact_wallet_address(address: &str) -> String {
+    let address = address.trim();
+    if address.is_empty() {
+        return String::new();
+    }
+
+    let char_count = address.chars().count();
+    if char_count <= 12 {
+        return "<redacted>".to_string();
+    }
+
+    let prefix = address.chars().take(6).collect::<String>();
+    let suffix = address
+        .chars()
+        .rev()
+        .take(6)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>();
+
+    format!("{prefix}...{suffix}")
 }
 
 async fn select_supervisors_for_stop(
@@ -1192,5 +1550,52 @@ impl GrpcServer {
             .map_err(|error| anyhow!("gRPC server error: {error}"))?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wallet_redaction_keeps_only_edges() {
+        assert_eq!(
+            redact_wallet_address("42ey1afDFnn4886T7196doS9GPMzexD9gXpsZJDwVjeRVdFCSoHnv7KPbBeGpzJBzHRCAs9UxqeoyFQMYbqSWYTfJJQAWDm"),
+            "42ey1a...JQAWDm"
+        );
+        assert_eq!(redact_wallet_address("short"), "<redacted>");
+        assert_eq!(redact_wallet_address(""), "");
+    }
+
+    #[test]
+    fn idle_mining_state_uses_config_summary_without_raw_wallet() {
+        let mut config = Config::default();
+        config.mining.active_coin = "monero".to_string();
+        config.mining.active_wallet = "monero_main".to_string();
+        config.mining.active_pool = "minexmr".to_string();
+        config.wallets.get_mut("monero_main").unwrap().address =
+            "42ey1afDFnn4886T7196doS9GPMzexD9gXpsZJDwVjeRVdFCSoHnv7KPbBeGpzJBzHRCAs9UxqeoyFQMYbqSWYTfJJQAWDm".to_string();
+
+        let response = mining_state_response(MiningStateResponseInput {
+            state: mining_state_response::LifecycleState::MiningLifecycleStateIdle,
+            status_message: "No active mining process".to_string(),
+            miner_name: None,
+            config: &config,
+            device_ids: &[],
+            restart_count: 0,
+            latest_telemetry: None,
+            error_details: None,
+        });
+
+        assert_eq!(
+            response.state,
+            mining_state_response::LifecycleState::MiningLifecycleStateIdle as i32
+        );
+        assert_eq!(response.active_coin, "monero");
+        assert_eq!(response.algorithm, "randomx");
+        assert_eq!(response.pool_url, "pool.minexmr.com:4444");
+        assert_eq!(response.wallet_address_redacted, "42ey1a...JQAWDm");
+        assert!(!response.wallet_address_redacted.contains("VjeRVdFC"));
+        assert!(!response.telemetry_available);
     }
 }
