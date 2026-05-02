@@ -2,7 +2,7 @@
 
 Status: active development control spec  
 Last updated: 2026-05-02  
-Companion docs: `PRODUCT_SPEC.md`, `PRODUCT_IMPLEMENTATION_TRACKER.md`, `BUILD_BASELINE.md`, `specs/LOCAL_MINER_MVP.md`
+Companion docs: `PRODUCT_SPEC.md`, `PRODUCT_IMPLEMENTATION_TRACKER.md`, `BUILD_BASELINE.md`, `specs/LOCAL_MINER_MVP.md`, `specs/BUNKER_P2POOL_MODE.md`
 
 ## Purpose
 
@@ -211,6 +211,15 @@ Current readiness: 20-25%.
 
 | ID | Requirement | Acceptance Gate |
 | --- | --- | --- |
+| P2POOL-001 | External P2Pool profile | Daemon/CLI can run verified XMRig against an operator-managed local P2Pool Stratum endpoint without passing the wallet to XMRig. |
+| P2POOL-002 | P2Pool readiness probe | Local Stratum reachability is checked and unavailable/error states are typed before mining claims success. |
+| P2POOL-003 | External monerod health probe | RPC reachability, sync state, network, and ZMQ readiness are reported without BUNKER owning the node. |
+| P2POOL-004 | P2Pool live evidence harness | Validation script records XMRig connection/share telemetry against local P2Pool with redacted launch data. |
+| P2POOL-005 | Managed P2Pool trust chain | P2Pool archive and executable verification follow curated manifest/signature policy before execution. |
+| P2POOL-006 | Managed P2Pool supervisor | P2Pool process lifecycle, logs, failures, and stop behavior are supervised and observable. |
+| P2POOL-007 | Managed monerod policy | Local-only RPC/ZMQ defaults, disk/sync expectations, pruned-node option, and remote-node warnings are enforced/documented. |
+| P2POOL-008 | UI/CLI operator flow | Direct pool, external P2Pool, and managed P2Pool are separate clear workflows with pending/error/remediation states. |
+| P2POOL-009 | Observer/share proof | Product evidence can connect local share telemetry to P2Pool-side status without BUNKER custody. |
 | POOL-001 | Workspace promotion | `pool/` builds and tests under root workspace with warnings denied. |
 | POOL-002 | Stratum correctness | Subscribe/authorize/job/submit paths are tested against real miners. |
 | POOL-003 | Share validation | Difficulty, target, duplicate, stale, and invalid share handling are correct. |
@@ -261,9 +270,11 @@ This scope is not achieved by wrapping XMRig alone. It requires measurable, repe
    - `UI-001` through `UI-005`.
 5. Promote fleet:
    - `FLT-001` through `FLT-006`.
-6. Promote pool:
+6. Add non-custodial pool integration:
+   - `P2POOL-001` through `P2POOL-009`.
+7. Promote centralized pool only after non-custodial pool and local release gates:
    - `POOL-001` through `POOL-006`.
-7. Prove industry-leading optimization:
+8. Prove industry-leading optimization:
    - `IL-001` through `IL-009`.
 
 ## Next Implementation Queue
@@ -275,14 +286,16 @@ Completed since this spec was created:
 | Order | Work | Why It Is Next |
 | ---: | --- | --- |
 | 1 | `LM-012` live pool/session/share validation | Converts diagnostic XMRig proof into real mining-session proof; final evidence still needs approved pool/wallet. |
-| 2 | `LM-008` crash recovery | Real miners fail; product must classify and recover predictably. |
-| 3 | `LM-010` atomic config apply | Operators need safe config changes before release. |
-| 4 | `TRUST-001` curated manifest | Production install cannot depend on ad hoc validation scripts. |
-| 5 | `LM-011` local dashboard workflow | UI cannot claim product readiness until it uses daemon truth. |
-| 6 | `REL-001` CI parity | Local green gates must become enforced remote gates. |
-| 7 | `REL-004` support bundle | Product support needs redacted diagnostics. |
-| 8 | `REL-002` packaging | Users need installable release artifacts. |
-| 9 | `SBP-003` CPU telemetry cleanup | XMRig RandomX is CPU-first; telemetry must model that cleanly. |
+| 2 | `P2POOL-001` external P2Pool profile | Gives BUNKER a product-grade non-custodial pool path without building payout infrastructure first. |
+| 3 | `P2POOL-002` P2Pool readiness probe | Prevents false "mining started" claims when local P2Pool is not ready. |
+| 4 | `LM-008` crash recovery | Real miners fail; product must classify and recover predictably. |
+| 5 | `LM-010` atomic config apply | Operators need safe config changes before release. |
+| 6 | `TRUST-001` curated manifest | Production install cannot depend on ad hoc validation scripts. |
+| 7 | `LM-011` local dashboard workflow | UI cannot claim product readiness until it uses daemon truth. |
+| 8 | `REL-001` CI parity | Local green gates must become enforced remote gates. |
+| 9 | `REL-004` support bundle | Product support needs redacted diagnostics. |
+| 10 | `REL-002` packaging | Users need installable release artifacts. |
+| 11 | `SBP-003` CPU telemetry cleanup | XMRig RandomX is CPU-first; telemetry must model that cleanly. |
 
 ## Readiness Scoring Rules
 
@@ -313,7 +326,8 @@ Every implementation unit must include:
 ## Explicit Non-Goals Until Prerequisites Are Done
 
 - Do not promote `fleet/` before local MVP and release gates are stable.
-- Do not promote `pool/` before Stratum/share validation and accounting design are reviewed.
+- Do not promote centralized `pool/` before P2Pool/direct-pool local workflows, Stratum/share validation, accounting design, wallet controls, and operational review are complete.
+- Do not imply BUNKER operates a production payout pool while `pool/` is quarantined.
 - Do not ship automatic overclocking before safety policy, opt-in UX, and rollback are tested.
 - Do not claim AI or industry-leading optimization before benchmark evidence exists.
 - Do not ship remote access without authentication, authorization, TLS policy, and audit logs.

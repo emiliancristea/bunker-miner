@@ -1,5 +1,19 @@
 # BUNKER POOL - Architecture Design Document
 
+## 2026 Product Reality Check
+
+This document describes the long-term centralized BUNKER POOL platform. It is not the immediate product path for the local miner release.
+
+Current decision: BUNKER should ship pool integration in this order:
+
+1. Direct public pool validation through verified XMRig.
+2. External P2Pool mode for non-custodial Monero pool mining.
+3. Managed P2Pool supervision after installer trust and process lifecycle gates are complete.
+4. Managed `monerod` after node sync, RPC/ZMQ, disk, privacy, and verification gates are complete.
+5. Centralized BUNKER POOL only after Stratum correctness, share accounting, payout wallet controls, abuse handling, observability, and legal/operational review.
+
+The current `pool/` crate remains quarantined and must not be used for production claims until promoted through `docs/PRODUCT_IMPLEMENTATION_TRACKER.md`. The actionable near-term pool specification is `docs/specs/BUNKER_P2POOL_MODE.md`.
+
 This document outlines the comprehensive architecture for the BUNKER POOL mining pool infrastructure, covering all components from the Stratum server to payout processing.
 
 ## Executive Summary

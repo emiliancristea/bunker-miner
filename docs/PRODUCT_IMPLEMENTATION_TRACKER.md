@@ -28,7 +28,23 @@ This tracker converts `docs/PRODUCT_SPEC.md` and `docs/PRODUCT_GRADE_100_PERCENT
 | LM-009 | Mining state API | done | API exposes idle/starting/running/stopping/error state with active config and process health | `GetMiningState` and `bunker-miner-cli status` expose daemon lifecycle snapshot, redacted active config summary, restart count, and latest telemetry availability |
 | LM-010 | Config validation/apply workflow | planned | Config validate/set is atomic and secrets are redacted in exports/logs | Current gRPC set path needs schema validation |
 | LM-011 | Local web dashboard operator flow | planned | Dashboard reads daemon state and performs start/stop with real pending/error states | No mock success allowed |
-| LM-012 | Live pool session validation | blocked | XMRig connects to a real pool with an operator-provided wallet and reports pool/share state without diagnostic benchmark mode | Parser/CLI/script harness implemented; final evidence still requires approved pool endpoint and wallet/test account |
+| LM-012 | Live pool session validation | blocked | XMRig connects to a real pool with an operator-provided wallet or approved P2Pool profile and reports pool/share state without diagnostic benchmark mode | Parser/CLI/script harness implemented; final evidence still requires approved public pool plus wallet/test account, or external local P2Pool profile work |
+
+## Level 2.5: Non-Custodial Pool Integration
+
+These items are part of the local miner product path. They are intentionally separate from the quarantined centralized `pool/` crate because P2Pool can provide product-grade pool behavior without BUNKER taking payout custody.
+
+| ID | Area | Status | Acceptance Gate | Evidence / Next Step |
+| --- | --- | --- | --- | --- |
+| P2POOL-001 | External P2Pool profile | planned | CLI/daemon can start verified XMRig against `127.0.0.1:3333` using P2Pool login semantics without passing the wallet to XMRig | Add pool profile enum/config mapping and start-command tests |
+| P2POOL-002 | P2Pool readiness probe | planned | Daemon validates local Stratum TCP reachability and returns typed unavailable/error state before mining claims success | Add probe and CLI/status output |
+| P2POOL-003 | External monerod health probe | planned | Daemon can report external `monerod` RPC reachability, sync state, network, and ZMQ readiness | Add health model after P2Pool profile exists |
+| P2POOL-004 | P2Pool live evidence harness | planned | Validation script can run against external P2Pool and capture XMRig pool/share telemetry with redacted launch args | Extend `scripts/validate-xmrig-local-miner.ps1` |
+| P2POOL-005 | Managed P2Pool trust chain | planned | Curated P2Pool manifests verify archive/signature/executable before execution | Depends on production manifest policy |
+| P2POOL-006 | Managed P2Pool supervisor | planned | Daemon starts/stops/observes P2Pool as a supervised process with typed failures | Depends on P2POOL-005 and crash model |
+| P2POOL-007 | Managed monerod policy | planned | Local-only RPC/ZMQ defaults, disk/sync expectations, pruned-node option, and remote-node warnings are documented/enforced | Requires product decision on managed node scope |
+| P2POOL-008 | UI/CLI operator flow | planned | Direct pool, external P2Pool, and managed P2Pool are separate operator workflows with no mock success | Depends on P2POOL-001 through P2POOL-003 |
+| P2POOL-009 | Observer/share proof | planned | Local telemetry can be tied to P2Pool-side share/status evidence without BUNKER custody | Requires approved wallet/share proof session |
 
 ## Level 3: Safety, Benchmarking, Profit
 
@@ -58,7 +74,7 @@ This tracker converts `docs/PRODUCT_SPEC.md` and `docs/PRODUCT_GRADE_100_PERCENT
 | ID | Area | Status | Acceptance Gate | Evidence / Next Step |
 | --- | --- | --- | --- | --- |
 | FLT-001 | Fleet crate promotion | quarantined | Fleet builds in workspace with no default credentials or SQLx drift | After Local Miner MVP |
-| POOL-001 | Pool crate promotion | quarantined | Pool builds and has correctness tests for Stratum/share validation | Separate product tier |
+| POOL-001 | Centralized pool crate promotion | quarantined | Pool builds and has correctness tests for Stratum/share validation | Separate product tier after P2Pool/direct-pool local workflows; centralized payout service remains out of release claims |
 | POC-001 | Developer PoC tools | quarantined | Keep excluded unless a named owner and product purpose exists | No release claims |
 
 ## Operating Rules
