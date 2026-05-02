@@ -10,7 +10,7 @@ BUNKER MINER is a secure mining management platform for operators who need local
 
 This specification is the source of truth for bringing the repository from prototype state to product-grade state. Historical phase reports and roadmap documents are informative only; a feature is product-ready only when it satisfies the acceptance gates in this document.
 
-Execution tracking lives in [PRODUCT_IMPLEMENTATION_TRACKER.md](PRODUCT_IMPLEMENTATION_TRACKER.md). Focused engineering requirements for the first release target live in [specs/LOCAL_MINER_MVP.md](specs/LOCAL_MINER_MVP.md). Codebase orientation lives in [CODEBASE_MENTAL_MODEL.md](CODEBASE_MENTAL_MODEL.md).
+Execution tracking lives in [PRODUCT_IMPLEMENTATION_TRACKER.md](PRODUCT_IMPLEMENTATION_TRACKER.md). The complete plan to reach 100% product grade lives in [PRODUCT_GRADE_100_PERCENT_SPEC.md](PRODUCT_GRADE_100_PERCENT_SPEC.md). Focused engineering requirements for the first release target live in [specs/LOCAL_MINER_MVP.md](specs/LOCAL_MINER_MVP.md). Codebase orientation lives in [CODEBASE_MENTAL_MODEL.md](CODEBASE_MENTAL_MODEL.md).
 
 ## 2. Product Definition
 

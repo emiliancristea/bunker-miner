@@ -3,7 +3,7 @@
 Status: active execution tracker  
 Last updated: 2026-05-02
 
-This tracker converts `docs/PRODUCT_SPEC.md` into durable implementation units. A unit is complete only when code, tests, docs, and release evidence all match the acceptance criteria. Historical phase documents are not evidence unless the current workspace gates still prove them.
+This tracker converts `docs/PRODUCT_SPEC.md` and `docs/PRODUCT_GRADE_100_PERCENT_SPEC.md` into durable implementation units. A unit is complete only when code, tests, docs, and release evidence all match the acceptance criteria. Historical phase documents are not evidence unless the current workspace gates still prove them.
 
 ## Status Legend
 

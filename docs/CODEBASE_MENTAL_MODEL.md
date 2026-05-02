@@ -98,6 +98,7 @@ quarantined future tiers:
 | Task | Look Here |
 | --- | --- |
 | Understand product target | `docs/PRODUCT_SPEC.md` |
+| Understand the path to 100% product grade | `docs/PRODUCT_GRADE_100_PERCENT_SPEC.md` |
 | See current implementation status | `docs/PRODUCT_IMPLEMENTATION_TRACKER.md` |
 | Work on Local Miner MVP | `docs/specs/LOCAL_MINER_MVP.md` |
 | Verify build/test policy | `docs/BUILD_BASELINE.md` |
