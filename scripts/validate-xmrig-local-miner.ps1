@@ -5,6 +5,11 @@ param(
     [string]$ExecutableName = "xmrig.exe",
     [int]$Threads = 1,
     [int]$TelemetryTimeoutSeconds = 120,
+    [string]$LivePool,
+    [string]$LiveWallet,
+    [string]$LiveWorker = "bunker-miner-live-validation",
+    [string]$LivePassword = "x",
+    [bool]$RequireAcceptedShare = $true,
     [switch]$KeepArtifacts
 )
 
@@ -56,6 +61,19 @@ function Assert-WindowsX64 {
 }
 
 Assert-WindowsX64
+
+$livePoolMode = -not [string]::IsNullOrWhiteSpace($LivePool) -or -not [string]::IsNullOrWhiteSpace($LiveWallet)
+if ($livePoolMode) {
+    if ([string]::IsNullOrWhiteSpace($LivePool) -or [string]::IsNullOrWhiteSpace($LiveWallet)) {
+        throw "Live pool validation requires both -LivePool and -LiveWallet"
+    }
+    if ($LivePool -notmatch ":\d+$") {
+        throw "Live pool endpoint must include a port, for example pool.example.com:443"
+    }
+    if ($LiveWallet.Length -lt 20) {
+        throw "Live wallet/test account value is too short to be a mining account"
+    }
+}
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $daemonPath = Join-Path $repoRoot "target\debug\bunker-miner-daemon.exe"
@@ -135,20 +153,42 @@ archive_sha256 = "$actualArchiveSha256"
         $watch = Start-Process -FilePath $cliPath -ArgumentList @("watch", "--interval", "1") -PassThru -WindowStyle Hidden -RedirectStandardOutput $watchOut -RedirectStandardError $watchErr
         Start-Sleep -Milliseconds 750
 
-        Invoke-CheckedCommand -FilePath $cliPath -Arguments @(
-            "start",
-            "--algorithm", "randomx",
-            "--pool", "127.0.0.1:1",
-            "--wallet", "validation-wallet-not-used",
-            "--device", "$Threads",
-            "--param", "xmrig_benchmark=1M",
-            "--param", "print_time_seconds=1",
-            "--timeout-seconds", "60"
-        ) -FailureMessage "diagnostic XMRig start failed"
+        if ($livePoolMode) {
+            $startArgs = @(
+                "start",
+                "--algorithm", "randomx",
+                "--pool", $LivePool,
+                "--wallet", $LiveWallet,
+                "--worker", $LiveWorker,
+                "--password", $LivePassword,
+                "--device", "$Threads",
+                "--param", "print_time_seconds=1",
+                "--timeout-seconds", "60"
+            )
+            $failureMessage = "live pool XMRig start failed"
+        } else {
+            $startArgs = @(
+                "start",
+                "--algorithm", "randomx",
+                "--pool", "127.0.0.1:1",
+                "--wallet", "validation-wallet-not-used",
+                "--device", "$Threads",
+                "--param", "xmrig_benchmark=1M",
+                "--param", "print_time_seconds=1",
+                "--timeout-seconds", "60"
+            )
+            $failureMessage = "diagnostic XMRig start failed"
+        }
+
+        Invoke-CheckedCommand -FilePath $cliPath -Arguments $startArgs -FailureMessage $failureMessage
 
         $deadline = (Get-Date).AddSeconds($TelemetryTimeoutSeconds)
         $telemetryObserved = $false
+        $poolConnectedObserved = -not $livePoolMode
+        $shareObserved = -not ($livePoolMode -and $RequireAcceptedShare)
         $observedTelemetryLine = $null
+        $observedPoolLine = $null
+        $observedShareLine = $null
         while ((Get-Date) -lt $deadline) {
             if (Test-Path $watchOut) {
                 $watchText = Get-Content -Raw -Path $watchOut
@@ -157,11 +197,24 @@ archive_sha256 = "$actualArchiveSha256"
                         if ([double]$Matches[1] -gt 0) {
                             $telemetryObserved = $true
                             $observedTelemetryLine = $line
-                            break
                         }
                     }
+                    if ($livePoolMode -and $line -match "pool_status=connected") {
+                        $poolConnectedObserved = $true
+                        $observedPoolLine = $line
+                    }
+                    if ($livePoolMode -and $line -match "shares accepted=([0-9]+) rejected=([0-9]+) stale=([0-9]+)") {
+                        $accepted = [int]$Matches[1]
+                        $rejected = [int]$Matches[2]
+                        $stale = [int]$Matches[3]
+                        if (($accepted + $rejected + $stale) -gt 0) {
+                            $shareObserved = $true
+                            $observedShareLine = $line
+                        }
+                    }
+                    if ($telemetryObserved -and $poolConnectedObserved -and $shareObserved) { break }
                 }
-                if ($telemetryObserved) { break }
+                if ($telemetryObserved -and $poolConnectedObserved -and $shareObserved) { break }
             }
             Start-Sleep -Seconds 1
         }
@@ -169,11 +222,25 @@ archive_sha256 = "$actualArchiveSha256"
         if (-not $telemetryObserved) {
             throw "no randomx telemetry was observed within $TelemetryTimeoutSeconds seconds"
         }
+        if (-not $poolConnectedObserved) {
+            throw "no connected pool state was observed within $TelemetryTimeoutSeconds seconds"
+        }
+        if (-not $shareObserved) {
+            throw "no accepted/rejected/stale share state was observed within $TelemetryTimeoutSeconds seconds"
+        }
 
         Invoke-CheckedCommand -FilePath $cliPath -Arguments @("stop", "--force", "--timeout-seconds", "10") -FailureMessage "miner stop failed"
 
-        Write-Host "XMRig validation passed"
+        if ($livePoolMode) {
+            Write-Host "XMRig live pool validation passed"
+        } else {
+            Write-Host "XMRig diagnostic validation passed"
+        }
         Write-Host "Observed telemetry: $observedTelemetryLine"
+        if ($livePoolMode) {
+            Write-Host "Observed pool state: $observedPoolLine"
+            Write-Host "Observed share state: $observedShareLine"
+        }
         Write-Host "Archive SHA-256: $actualArchiveSha256"
         Write-Host "Executable SHA-256: $executableSha256"
         if ($KeepArtifacts) {

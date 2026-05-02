@@ -808,6 +808,7 @@ fn apply_grpc_mining_config(
                 port: grpc_config.pool_port as u16,
                 username: None,
                 worker_name: non_empty_string(grpc_config.worker_name.clone()),
+                password: non_empty_string(grpc_config.password.clone()),
                 ssl: grpc_config.pool_url.starts_with("ssl://")
                     || grpc_config.pool_url.starts_with("tls://")
                     || grpc_config.pool_url.starts_with("stratum+ssl://"),

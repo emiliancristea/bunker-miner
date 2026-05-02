@@ -398,7 +398,7 @@ Core entities:
 - Device: stable hardware identity and capabilities.
 - MinerBinary: source, version, platform, checksum, verification status.
 - MinerInstance: process identity, adapter, config, state, health.
-- PoolConfig: URL, algorithm, wallet, worker, fee metadata, failover priority.
+- PoolConfig: URL, algorithm, wallet, worker, pool password, fee metadata, failover priority.
 - BenchmarkRun: measured performance with metadata.
 - ProfitDecision: inputs, output, confidence, action taken.
 - SafetyPolicy: thermal/power/fan/crash limits.

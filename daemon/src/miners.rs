@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::{sleep, timeout};
@@ -18,6 +18,11 @@ use tracing::{debug, error, info, warn};
 use crate::checksum::{is_valid_sha256, parse_sha256_value, sha256_file};
 use crate::config::{Config, CONFIG_DIR_ENV};
 use crate::miner_manifest;
+
+const POOL_STATUS_CONNECTED: i32 = 1;
+const POOL_STATUS_CONNECTING: i32 = 2;
+const POOL_STATUS_DISCONNECTED: i32 = 3;
+const POOL_STATUS_ERROR: i32 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Telemetry {
@@ -268,16 +273,41 @@ impl MinerAdapter for LolMinerAdapter {
 pub struct XMRigAdapter {
     binary_info: MinerBinary,
     hashrate_pattern: Regex,
+    speed_pattern: Regex,
     shares_pattern: Regex,
+    rejected_pattern: Regex,
     temp_pattern: Regex,
+    pool_connected_pattern: Regex,
+    pool_connecting_pattern: Regex,
+    pool_disconnected_pattern: Regex,
+    pool_error_pattern: Regex,
 }
 
 impl XMRigAdapter {
     pub fn new() -> Self {
         let hashrate_pattern =
-            Regex::new(r"(\d+\.?\d*)\s*(H/s|kH/s|MH/s)").expect("Invalid hashrate regex");
-        let shares_pattern = Regex::new(r"accepted:\s*(\d+)/(\d+)").expect("Invalid shares regex");
+            Regex::new(r"(?i)(\d+(?:\.\d+)?)\s*([kmg]?H/s)").expect("Invalid hashrate regex");
+        let speed_pattern = Regex::new(
+            r"(?i)speed\s+10s/60s/15m\s+(\d+(?:\.\d+)?|n/a)\s+(?:\d+(?:\.\d+)?|n/a)\s+(?:\d+(?:\.\d+)?|n/a)\s+([kmg]?H/s)",
+        )
+        .expect("Invalid XMRig speed regex");
+        let shares_pattern =
+            Regex::new(r"(?i)\baccepted\s+\((\d+)/(\d+)\)").expect("Invalid shares regex");
+        let rejected_pattern =
+            Regex::new(r"(?i)\brejected\s+\((\d+)/(\d+)\)").expect("Invalid rejected regex");
         let temp_pattern = Regex::new(r"temp:\s*(\d+)C").expect("Invalid temperature regex");
+        let pool_connected_pattern =
+            Regex::new(r"(?i)(?:new job from|use pool|connected to)\s+([^\s]+)")
+                .expect("Invalid pool connected regex");
+        let pool_connecting_pattern = Regex::new(r"(?i)(?:connecting to|connect to)\s+([^\s]+)")
+            .expect("Invalid pool connecting regex");
+        let pool_disconnected_pattern =
+            Regex::new(r"(?i)(disconnect|connection closed|no active pools)")
+                .expect("Invalid pool disconnected regex");
+        let pool_error_pattern = Regex::new(
+            r"(?i)(connect error|login error|authorization failed|auth failed|invalid address|pool error|network error|tls handshake failed)",
+        )
+        .expect("Invalid pool error regex");
 
         XMRigAdapter {
             binary_info: MinerBinary {
@@ -290,8 +320,14 @@ impl XMRigAdapter {
                 supported_algorithms: vec!["randomx".to_string(), "randomwow".to_string()],
             },
             hashrate_pattern,
+            speed_pattern,
             shares_pattern,
+            rejected_pattern,
             temp_pattern,
+            pool_connected_pattern,
+            pool_connecting_pattern,
+            pool_disconnected_pattern,
+            pool_error_pattern,
         }
     }
 }
@@ -334,10 +370,11 @@ impl MinerAdapter for XMRigAdapter {
                 wallet.address.clone(),
             ]);
 
-            // Worker name (password field in XMRig)
-            if let Some(worker) = &pool.worker_name {
+            // XMRig uses -p for pool password. Keep worker_name as a fallback
+            // for older configs that stored the pool password there.
+            if let Some(password) = pool.password.as_ref().or(pool.worker_name.as_ref()) {
                 args.push("-p".to_string());
-                args.push(worker.clone());
+                args.push(password.clone());
             }
 
             // Algorithm selection
@@ -372,48 +409,86 @@ impl MinerAdapter for XMRigAdapter {
     fn get_telemetry_patterns(&self) -> Vec<Regex> {
         vec![
             self.hashrate_pattern.clone(),
+            self.speed_pattern.clone(),
             self.shares_pattern.clone(),
+            self.rejected_pattern.clone(),
             self.temp_pattern.clone(),
+            self.pool_connected_pattern.clone(),
+            self.pool_connecting_pattern.clone(),
+            self.pool_disconnected_pattern.clone(),
+            self.pool_error_pattern.clone(),
         ]
     }
 
     fn parse_telemetry_line(&self, line: &str) -> Option<Telemetry> {
+        let line = line.trim();
         let mut telemetry = Telemetry {
             algorithm: "randomx".to_string(),
             ..Telemetry::default()
         };
         let mut updated = false;
+        let mut hashrate_updated = false;
 
-        // Parse hashrate
-        if let Some(captures) = self.hashrate_pattern.captures(line) {
+        // Parse native XMRig speed lines first. Generic hashrate parsing can
+        // otherwise pick the 15m column instead of the current 10s column.
+        if let Some(captures) = self.speed_pattern.captures(line) {
             if let (Some(hashrate_match), Some(unit_match)) = (captures.get(1), captures.get(2)) {
-                if let Ok(hashrate) = hashrate_match.as_str().parse::<f64>() {
-                    let unit = unit_match.as_str();
+                if let Some((hashrate, unit, hashrate_hs)) =
+                    parse_hashrate(hashrate_match.as_str(), unit_match.as_str())
+                {
                     telemetry.hashrate = hashrate;
-                    telemetry.hashrate_unit = unit.to_string();
-
-                    // Convert to H/s for standardization
-                    telemetry.hashrate_hs = match unit {
-                        "H/s" => hashrate,
-                        "kH/s" => hashrate * 1_000.0,
-                        "MH/s" => hashrate * 1_000_000.0,
-                        _ => hashrate,
-                    };
-
+                    telemetry.hashrate_unit = unit;
+                    telemetry.hashrate_hs = hashrate_hs;
+                    hashrate_updated = true;
                     updated = true;
                 }
             }
         }
 
-        // Parse shares (accepted/total format)
+        // Parse generic hashrate lines from diagnostic output or alternate
+        // XMRig summaries when the native speed line has no current value.
+        if !hashrate_updated {
+            if let Some(captures) = self.hashrate_pattern.captures(line) {
+                if let (Some(hashrate_match), Some(unit_match)) = (captures.get(1), captures.get(2))
+                {
+                    if let Some((hashrate, unit, hashrate_hs)) =
+                        parse_hashrate(hashrate_match.as_str(), unit_match.as_str())
+                    {
+                        telemetry.hashrate = hashrate;
+                        telemetry.hashrate_unit = unit;
+                        telemetry.hashrate_hs = hashrate_hs;
+                        updated = true;
+                    }
+                }
+            }
+        }
+
+        // XMRig reports cumulative shares as accepted/rejected in parentheses.
         if let Some(captures) = self.shares_pattern.captures(line) {
-            if let (Some(accepted_match), Some(total_match)) = (captures.get(1), captures.get(2)) {
-                if let (Ok(accepted), Ok(total)) = (
+            if let (Some(accepted_match), Some(rejected_match)) = (captures.get(1), captures.get(2))
+            {
+                if let (Ok(accepted), Ok(rejected)) = (
                     accepted_match.as_str().parse::<u32>(),
-                    total_match.as_str().parse::<u32>(),
+                    rejected_match.as_str().parse::<u32>(),
                 ) {
                     telemetry.shares_accepted = accepted;
-                    telemetry.shares_rejected = total - accepted;
+                    telemetry.shares_rejected = rejected;
+                    telemetry.pool_status = POOL_STATUS_CONNECTED;
+                    updated = true;
+                }
+            }
+        }
+
+        if let Some(captures) = self.rejected_pattern.captures(line) {
+            if let (Some(accepted_match), Some(rejected_match)) = (captures.get(1), captures.get(2))
+            {
+                if let (Ok(accepted), Ok(rejected)) = (
+                    accepted_match.as_str().parse::<u32>(),
+                    rejected_match.as_str().parse::<u32>(),
+                ) {
+                    telemetry.shares_accepted = accepted;
+                    telemetry.shares_rejected = rejected;
+                    telemetry.pool_status = POOL_STATUS_CONNECTED;
                     updated = true;
                 }
             }
@@ -427,6 +502,30 @@ impl MinerAdapter for XMRigAdapter {
                     updated = true;
                 }
             }
+        }
+
+        if let Some(captures) = self.pool_connected_pattern.captures(line) {
+            telemetry.pool_status = POOL_STATUS_CONNECTED;
+            telemetry.pool_url = captures
+                .get(1)
+                .map(|pool| sanitize_pool_label(pool.as_str()))
+                .unwrap_or_default();
+            updated = true;
+        } else if let Some(captures) = self.pool_connecting_pattern.captures(line) {
+            telemetry.pool_status = POOL_STATUS_CONNECTING;
+            telemetry.pool_url = captures
+                .get(1)
+                .map(|pool| sanitize_pool_label(pool.as_str()))
+                .unwrap_or_default();
+            updated = true;
+        } else if self.pool_error_pattern.is_match(line) {
+            telemetry.pool_status = POOL_STATUS_ERROR;
+            telemetry.error_message = classify_xmrig_pool_error(line);
+            updated = true;
+        } else if self.pool_disconnected_pattern.is_match(line) {
+            telemetry.pool_status = POOL_STATUS_DISCONNECTED;
+            telemetry.error_message = "pool disconnected".to_string();
+            updated = true;
         }
 
         if updated {
@@ -884,7 +983,7 @@ impl ProcessSupervisor {
         info!(
             "Spawning miner: {} {}",
             self.binary_path.display(),
-            args.join(" ")
+            redacted_miner_args(&args).join(" ")
         );
 
         let mut child = Command::new(&self.binary_path)
@@ -898,34 +997,23 @@ impl ProcessSupervisor {
 
         // Set up telemetry parsing
         if let Some(stdout) = child.stdout.take() {
-            let adapter = self.adapter.clone();
-            let telemetry_sender = self.telemetry_sender.clone();
-            let latest_telemetry = self.latest_telemetry.clone();
+            spawn_telemetry_reader(
+                stdout,
+                "stdout",
+                self.adapter.clone(),
+                self.telemetry_sender.clone(),
+                self.latest_telemetry.clone(),
+            );
+        }
 
-            tokio::spawn(async move {
-                let reader = BufReader::new(stdout);
-                let mut lines = reader.lines();
-
-                while let Ok(Some(line)) = lines.next_line().await {
-                    debug!("Miner output: {}", line);
-
-                    if let Some(telemetry) = adapter.parse_telemetry_line(&line) {
-                        // Update latest telemetry
-                        {
-                            let mut latest = latest_telemetry.write().await;
-                            *latest = Some(telemetry.clone());
-                        }
-
-                        // Send to telemetry channel
-                        if let Some(sender) = &telemetry_sender {
-                            if let Err(e) = sender.send(telemetry) {
-                                error!("Failed to send telemetry: {}", e);
-                                break;
-                            }
-                        }
-                    }
-                }
-            });
+        if let Some(stderr) = child.stderr.take() {
+            spawn_telemetry_reader(
+                stderr,
+                "stderr",
+                self.adapter.clone(),
+                self.telemetry_sender.clone(),
+                self.latest_telemetry.clone(),
+            );
         }
 
         self.child_process = Some(child);
@@ -959,6 +1047,39 @@ impl ProcessSupervisor {
     pub fn get_restart_count(&self) -> u32 {
         self.restart_count
     }
+}
+
+fn spawn_telemetry_reader<R>(
+    stream: R,
+    stream_name: &'static str,
+    adapter: Arc<dyn MinerAdapter>,
+    telemetry_sender: Option<mpsc::UnboundedSender<Telemetry>>,
+    latest_telemetry: Arc<RwLock<Option<Telemetry>>>,
+) where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        let reader = BufReader::new(stream);
+        let mut lines = reader.lines();
+
+        while let Ok(Some(line)) = lines.next_line().await {
+            debug!("Miner {stream_name}: {}", line);
+
+            if let Some(telemetry) = adapter.parse_telemetry_line(&line) {
+                {
+                    let mut latest = latest_telemetry.write().await;
+                    *latest = Some(telemetry.clone());
+                }
+
+                if let Some(sender) = &telemetry_sender {
+                    if let Err(e) = sender.send(telemetry) {
+                        error!("Failed to send telemetry: {}", e);
+                        break;
+                    }
+                }
+            }
+        }
+    });
 }
 
 fn build_pool_endpoint(pool: &crate::config::PoolConfig, secure_scheme: &str) -> String {
@@ -1006,6 +1127,98 @@ fn xmrig_benchmark(extra_params: &HashMap<String, String>) -> Result<Option<Stri
     Err(anyhow!(
         "xmrig_benchmark supports only bounded diagnostic values: 1M or 10M"
     ))
+}
+
+fn parse_hashrate(value: &str, unit: &str) -> Option<(f64, String, f64)> {
+    let hashrate = value.parse::<f64>().ok()?;
+    let canonical_unit = canonical_hashrate_unit(unit)?;
+    let hashrate_hs = match canonical_unit.as_str() {
+        "H/s" => hashrate,
+        "kH/s" => hashrate * 1_000.0,
+        "MH/s" => hashrate * 1_000_000.0,
+        "GH/s" => hashrate * 1_000_000_000.0,
+        _ => return None,
+    };
+
+    Some((hashrate, canonical_unit, hashrate_hs))
+}
+
+fn canonical_hashrate_unit(unit: &str) -> Option<String> {
+    match unit.to_ascii_lowercase().as_str() {
+        "h/s" => Some("H/s".to_string()),
+        "kh/s" => Some("kH/s".to_string()),
+        "mh/s" => Some("MH/s".to_string()),
+        "gh/s" => Some("GH/s".to_string()),
+        _ => None,
+    }
+}
+
+fn sanitize_pool_label(raw_pool: &str) -> String {
+    raw_pool
+        .trim()
+        .trim_end_matches(',')
+        .trim_end_matches(';')
+        .trim_end_matches(')')
+        .trim_end_matches(']')
+        .to_string()
+}
+
+fn classify_xmrig_pool_error(line: &str) -> String {
+    let line = line.to_ascii_lowercase();
+
+    if line.contains("login error")
+        || line.contains("authorization failed")
+        || line.contains("auth failed")
+        || line.contains("invalid address")
+    {
+        "pool authentication failed".to_string()
+    } else if line.contains("tls handshake failed") {
+        "pool TLS handshake failed".to_string()
+    } else if line.contains("connect error") || line.contains("network error") {
+        "pool connection failed".to_string()
+    } else {
+        "pool error reported by miner".to_string()
+    }
+}
+
+fn redacted_miner_args(args: &[String]) -> Vec<String> {
+    let mut redacted = Vec::with_capacity(args.len());
+    let mut redact_next = false;
+
+    for arg in args {
+        if redact_next {
+            redacted.push("<redacted>".to_string());
+            redact_next = false;
+            continue;
+        }
+
+        let lower = arg.to_ascii_lowercase();
+        if matches!(
+            lower.as_str(),
+            "-u" | "--user" | "--wallet" | "-p" | "--pass" | "--password"
+        ) {
+            redacted.push(arg.clone());
+            redact_next = true;
+            continue;
+        }
+
+        if lower.starts_with("--user=")
+            || lower.starts_with("--wallet=")
+            || lower.starts_with("--pass=")
+            || lower.starts_with("--password=")
+        {
+            if let Some((key, _)) = arg.split_once('=') {
+                redacted.push(format!("{key}=<redacted>"));
+            } else {
+                redacted.push("<redacted>".to_string());
+            }
+            continue;
+        }
+
+        redacted.push(arg.clone());
+    }
+
+    redacted
 }
 
 #[cfg(test)]
@@ -1135,6 +1348,30 @@ mod tests {
     }
 
     #[test]
+    fn test_xmrig_prefers_pool_password_over_worker_for_password_arg() {
+        let mut config = Config::default();
+        config.mining.active_coin = "monero".to_string();
+        config.mining.active_wallet = "monero_main".to_string();
+        config.mining.active_pool = "minexmr".to_string();
+        config.wallets.get_mut("monero_main").unwrap().address =
+            "42ey1afDFnn4886T7196doS9GPMzexD9gXpsZJDwVjeRVdFCSoHnv7KPbBeGpzJBzHRCAs9UxqeoyFQMYbqSWYTfJJQAWDm".to_string();
+        let pool = config.pools.get_mut("minexmr").unwrap();
+        pool.worker_name = Some("worker-name".to_string());
+        pool.password = Some("pool-password".to_string());
+
+        let args = XMRigAdapter::new().build_args(&config, &[]).unwrap();
+        let password_flag_index = args
+            .iter()
+            .position(|arg| arg == "-p")
+            .expect("XMRig password flag should be present");
+
+        assert_eq!(
+            args.get(password_flag_index + 1).map(String::as_str),
+            Some("pool-password")
+        );
+    }
+
+    #[test]
     fn test_xmrig_diagnostic_benchmark_args_are_bounded() {
         let mut config = Config::default();
         config.mining.active_coin = "monero".to_string();
@@ -1174,6 +1411,72 @@ mod tests {
         let error = adapter.build_args(&config, &[]).unwrap_err();
 
         assert!(error.to_string().contains("xmrig_benchmark supports"));
+    }
+
+    #[test]
+    fn test_xmrig_parses_live_speed_line() {
+        let adapter = XMRigAdapter::new();
+        let telemetry = adapter
+            .parse_telemetry_line("speed 10s/60s/15m 745.40 n/a n/a H/s max 748.10 H/s")
+            .unwrap();
+
+        assert_eq!(telemetry.algorithm, "randomx");
+        assert_eq!(telemetry.hashrate_unit, "H/s");
+        assert_eq!(telemetry.hashrate_hs, 745.40);
+    }
+
+    #[test]
+    fn test_xmrig_parses_accepted_share_tuple() {
+        let adapter = XMRigAdapter::new();
+        let telemetry = adapter
+            .parse_telemetry_line("cpu      accepted (12/1) diff 10000 (57 ms)")
+            .unwrap();
+
+        assert_eq!(telemetry.shares_accepted, 12);
+        assert_eq!(telemetry.shares_rejected, 1);
+        assert_eq!(telemetry.pool_status, POOL_STATUS_CONNECTED);
+    }
+
+    #[test]
+    fn test_xmrig_parses_pool_state_without_raw_secret_error() {
+        let adapter = XMRigAdapter::new();
+        let connected = adapter
+            .parse_telemetry_line(
+                "net      new job from pool.supportxmr.com:443 diff 100000 algo rx/0",
+            )
+            .unwrap();
+        let error = adapter
+            .parse_telemetry_line("net      login error code: -1")
+            .unwrap();
+
+        assert_eq!(connected.pool_status, POOL_STATUS_CONNECTED);
+        assert_eq!(connected.pool_url, "pool.supportxmr.com:443");
+        assert_eq!(error.pool_status, POOL_STATUS_ERROR);
+        assert_eq!(error.error_message, "pool authentication failed");
+    }
+
+    #[test]
+    fn test_miner_arg_logging_redacts_wallet_and_password() {
+        let args = vec![
+            "-o".to_string(),
+            "pool.example.com:443".to_string(),
+            "-u".to_string(),
+            "wallet-address".to_string(),
+            "-p".to_string(),
+            "pool-password".to_string(),
+            "--user=inline-wallet".to_string(),
+            "--password=inline-password".to_string(),
+            "--print-time=1".to_string(),
+        ];
+
+        let redacted = redacted_miner_args(&args);
+
+        assert!(redacted.contains(&"pool.example.com:443".to_string()));
+        assert!(redacted.contains(&"--print-time=1".to_string()));
+        assert!(!redacted.iter().any(|arg| arg.contains("wallet-address")));
+        assert!(!redacted.iter().any(|arg| arg.contains("pool-password")));
+        assert!(!redacted.iter().any(|arg| arg.contains("inline-wallet")));
+        assert!(!redacted.iter().any(|arg| arg.contains("inline-password")));
     }
 
     #[test]

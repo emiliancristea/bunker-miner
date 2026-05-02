@@ -1,7 +1,7 @@
 # Local Miner MVP Specification
 
 Status: active implementation spec  
-Tracker IDs: LM-001 through LM-011  
+Tracker IDs: LM-001 through LM-012  
 Last updated: 2026-05-02
 
 ## Purpose
@@ -90,10 +90,11 @@ signature_url = "https://example.com/xmrig.zip.sig"
 - Service smoke starts daemon with non-interactive config, calls CLI health, and verifies missing miner returns `MINER_BINARY_UNAVAILABLE`.
 - Real miner validation runs XMRig through daemon + CLI with a trusted binary and captures start, nonzero telemetry, and stop behavior.
 - Live pool validation runs XMRig against an approved pool/wallet pair and captures pool connection/share state.
+- `scripts/validate-xmrig-local-miner.ps1 -LivePool <host:port> -LiveWallet <wallet> [-LivePassword <password>]` is the current evidence harness for live XMRig validation; it must not be run with placeholder credentials.
 
 ## Release Blockers
 
-- No live pool/session/share validation with an approved pool and wallet.
+- No recorded live pool/session/share validation with an approved pool and wallet.
 - No curated production manifest/release evidence for supported miner archives.
 - No persistent mining state recovery after daemon restart.
 - No local UI workflow backed entirely by daemon state.

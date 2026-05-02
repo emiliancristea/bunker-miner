@@ -140,6 +140,8 @@ pub struct PoolConfig {
     pub port: u16,
     pub username: Option<String>,
     pub worker_name: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
     pub ssl: bool,
     pub priority: u8,
 }
@@ -214,6 +216,7 @@ impl Default for Config {
                 port: 3333,
                 username: None,
                 worker_name: Some("bunker-miner".to_string()),
+                password: None,
                 ssl: true,
                 priority: 10, // Highest priority
             },
@@ -227,6 +230,7 @@ impl Default for Config {
                 port: 3334,
                 username: None,
                 worker_name: Some("bunker-miner".to_string()),
+                password: None,
                 ssl: true,
                 priority: 10, // Highest priority
             },
@@ -240,6 +244,7 @@ impl Default for Config {
                 port: 3335,
                 username: None,
                 worker_name: Some("bunker-miner".to_string()),
+                password: None,
                 ssl: true,
                 priority: 10, // Highest priority
             },
@@ -254,6 +259,7 @@ impl Default for Config {
                 port: 9999,
                 username: None,
                 worker_name: Some("bunker-miner".to_string()),
+                password: None,
                 ssl: false,
                 priority: 1, // Lower priority backup
             },
@@ -267,6 +273,7 @@ impl Default for Config {
                 port: 4444,
                 username: None,
                 worker_name: Some("bunker-miner".to_string()),
+                password: None,
                 ssl: false,
                 priority: 1, // Lower priority backup
             },

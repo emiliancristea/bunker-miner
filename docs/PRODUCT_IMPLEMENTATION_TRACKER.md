@@ -28,7 +28,7 @@ This tracker converts `docs/PRODUCT_SPEC.md` and `docs/PRODUCT_GRADE_100_PERCENT
 | LM-009 | Mining state API | planned | API exposes idle/starting/running/stopping/error state with active config and process health | Required before UI claims |
 | LM-010 | Config validation/apply workflow | planned | Config validate/set is atomic and secrets are redacted in exports/logs | Current gRPC set path needs schema validation |
 | LM-011 | Local web dashboard operator flow | planned | Dashboard reads daemon state and performs start/stop with real pending/error states | No mock success allowed |
-| LM-012 | Live pool session validation | blocked | XMRig connects to a real pool with an operator-provided wallet and reports pool/share state without diagnostic benchmark mode | Requires approved pool endpoint and wallet/test account |
+| LM-012 | Live pool session validation | blocked | XMRig connects to a real pool with an operator-provided wallet and reports pool/share state without diagnostic benchmark mode | Parser/CLI/script harness implemented; final evidence still requires approved pool endpoint and wallet/test account |
 
 ## Level 3: Safety, Benchmarking, Profit
 

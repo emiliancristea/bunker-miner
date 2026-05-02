@@ -408,7 +408,7 @@ async fn watch_command(
             .unwrap_or_else(|| "shares unavailable".to_string());
 
         println!(
-            "[{}] device={} status={} algorithm={} hashrate={} power={}W temp={}C fan={} util={} mem_util={} {} pool={}",
+            "[{}] device={} status={} algorithm={} hashrate={} power={}W temp={}C fan={} util={} mem_util={} {} pool_status={} pool={}",
             timestamp,
             telemetry.device_id,
             device_status_label(telemetry.device_status),
@@ -420,6 +420,7 @@ async fn watch_command(
             telemetry.utilization_percent,
             telemetry.memory_utilization_percent,
             shares,
+            pool_status_label(telemetry.pool_status),
             telemetry.pool_url,
         );
 
@@ -768,6 +769,16 @@ fn command_status_label(value: i32) -> &'static str {
     }
 }
 
+fn pool_status_label(value: i32) -> &'static str {
+    match enum_value(value, telemetry::PoolStatus::Unknown) {
+        telemetry::PoolStatus::Connected => "connected",
+        telemetry::PoolStatus::Connecting => "connecting",
+        telemetry::PoolStatus::Disconnected => "disconnected",
+        telemetry::PoolStatus::Error => "error",
+        telemetry::PoolStatus::Unknown => "unknown",
+    }
+}
+
 fn format_hashrate(hashrate_mhs: f64) -> String {
     let hashrate_hs = hashrate_mhs * 1_000_000.0;
 
@@ -869,5 +880,18 @@ mod tests {
         assert_eq!(format_hashrate(0.000012), "12.00 H/s");
         assert_eq!(format_hashrate(0.012), "12.00 kH/s");
         assert_eq!(format_hashrate(12.0), "12.00 MH/s");
+    }
+
+    #[test]
+    fn formats_pool_status_labels() {
+        assert_eq!(
+            pool_status_label(telemetry::PoolStatus::Connected as i32),
+            "connected"
+        );
+        assert_eq!(
+            pool_status_label(telemetry::PoolStatus::Error as i32),
+            "error"
+        );
+        assert_eq!(pool_status_label(999), "unknown");
     }
 }
