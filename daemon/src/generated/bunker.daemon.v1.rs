@@ -711,6 +711,57 @@ pub struct StopMiningRequest {
     #[prost(uint32, tag = "3")]
     pub timeout_seconds: u32,
 }
+/// Request to install a supported miner binary from a trusted manifest
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct InstallMinerRequest {
+    /// Manifest miner name, for example XMRig
+    #[prost(string, tag = "1")]
+    pub miner_name: ::prost::alloc::string::String,
+    /// Optional exact manifest version. Required when the manifest has multiple
+    /// matching versions for the current platform.
+    #[prost(string, tag = "2")]
+    pub version: ::prost::alloc::string::String,
+    /// Whether to replace an existing executable with a mismatched checksum
+    #[prost(bool, tag = "3")]
+    pub force: bool,
+    /// Timeout for installation in seconds
+    /// Validated: >= 1, <= 600 (10 minutes max)
+    #[prost(uint32, tag = "4")]
+    pub timeout_seconds: u32,
+}
+/// Result of a verified miner installation
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct InstallMinerResult {
+    #[prost(string, tag = "1")]
+    pub miner_name: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub version: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub executable_path: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub executable_sha256: ::prost::alloc::string::String,
+    #[prost(string, tag = "5")]
+    pub source_url: ::prost::alloc::string::String,
+}
+/// Response for verified miner installation
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct InstallMinerResponse {
+    #[prost(enumeration = "command_response::Status", tag = "1")]
+    pub status: i32,
+    #[prost(string, tag = "2")]
+    pub message: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "3")]
+    pub installed_miner: ::core::option::Option<InstallMinerResult>,
+    #[prost(message, optional, tag = "4")]
+    pub error_details: ::core::option::Option<command_response::ErrorDetails>,
+    #[prost(message, optional, tag = "5")]
+    pub timestamp: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(uint32, tag = "6")]
+    pub execution_duration_ms: u32,
+}
 /// Generic command response
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1143,6 +1194,34 @@ pub mod bunker_miner_daemon_client {
                 );
             self.inner.unary(req, path, codec).await
         }
+        /// Install a miner binary through manifest-backed archive verification
+        pub async fn install_miner(
+            &mut self,
+            request: impl tonic::IntoRequest<super::InstallMinerRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::InstallMinerResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/bunker.daemon.v1.BunkerMinerDaemon/InstallMiner",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("bunker.daemon.v1.BunkerMinerDaemon", "InstallMiner"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
         /// Stream real-time telemetry data from mining devices
         pub async fn stream_telemetry(
             &mut self,
@@ -1451,6 +1530,14 @@ pub mod bunker_miner_daemon_server {
             &self,
             request: tonic::Request<super::StopMiningRequest>,
         ) -> std::result::Result<tonic::Response<super::CommandResponse>, tonic::Status>;
+        /// Install a miner binary through manifest-backed archive verification
+        async fn install_miner(
+            &self,
+            request: tonic::Request<super::InstallMinerRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::InstallMinerResponse>,
+            tonic::Status,
+        >;
         /// Server streaming response type for the StreamTelemetry method.
         type StreamTelemetryStream: tonic::codegen::tokio_stream::Stream<
                 Item = std::result::Result<super::Telemetry, tonic::Status>,
@@ -1773,6 +1860,53 @@ pub mod bunker_miner_daemon_server {
                     let fut = async move {
                         let inner = inner.0;
                         let method = StopMiningSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/bunker.daemon.v1.BunkerMinerDaemon/InstallMiner" => {
+                    #[allow(non_camel_case_types)]
+                    struct InstallMinerSvc<T: BunkerMinerDaemon>(pub Arc<T>);
+                    impl<
+                        T: BunkerMinerDaemon,
+                    > tonic::server::UnaryService<super::InstallMinerRequest>
+                    for InstallMinerSvc<T> {
+                        type Response = super::InstallMinerResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::InstallMinerRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as BunkerMinerDaemon>::install_miner(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = InstallMinerSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

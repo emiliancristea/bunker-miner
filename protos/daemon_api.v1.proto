@@ -486,6 +486,42 @@ message StopMiningRequest {
   uint32 timeout_seconds = 3;
 }
 
+// Request to install a supported miner binary from a trusted manifest
+message InstallMinerRequest {
+  // Manifest miner name, for example XMRig
+  string miner_name = 1;
+
+  // Optional exact manifest version. Required when the manifest has multiple
+  // matching versions for the current platform.
+  string version = 2;
+
+  // Whether to replace an existing executable with a mismatched checksum
+  bool force = 3;
+
+  // Timeout for installation in seconds
+  // Validated: >= 1, <= 600 (10 minutes max)
+  uint32 timeout_seconds = 4;
+}
+
+// Result of a verified miner installation
+message InstallMinerResult {
+  string miner_name = 1;
+  string version = 2;
+  string executable_path = 3;
+  string executable_sha256 = 4;
+  string source_url = 5;
+}
+
+// Response for verified miner installation
+message InstallMinerResponse {
+  CommandResponse.Status status = 1;
+  string message = 2;
+  InstallMinerResult installed_miner = 3;
+  CommandResponse.ErrorDetails error_details = 4;
+  google.protobuf.Timestamp timestamp = 5;
+  uint32 execution_duration_ms = 6;
+}
+
 // Generic command response
 message CommandResponse {
   // Command execution status
@@ -643,6 +679,13 @@ service BunkerMinerDaemon {
   rpc StopMining(StopMiningRequest) returns (CommandResponse) {
     // Security: State-changing operation, requires authentication for remote access
     // Rate Limit: 5 requests/second per client
+  }
+
+  // Install a miner binary through manifest-backed archive verification
+  rpc InstallMiner(InstallMinerRequest) returns (InstallMinerResponse) {
+    // Security: Downloads third-party code only from a validated HTTPS manifest entry
+    // Rate Limit: 1 request/minute per client
+    // Validation: Archive SHA-256 and executable SHA-256 must match before install
   }
   
   // Real-time Data Streaming

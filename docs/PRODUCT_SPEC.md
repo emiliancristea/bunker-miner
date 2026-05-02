@@ -598,8 +598,8 @@ Exit criteria:
 
 The current repository is not product-grade because the Level 2 local miner workflow is not complete end to end:
 
-- Verified miner binary installation/acquisition is not implemented.
-- Real XMRig start-to-telemetry validation has not been completed with a trusted binary.
+- Real XMRig start-to-telemetry validation has not been completed with a trusted manifest entry and binary.
+- Curated production manifest/release evidence for supported miner archives is not yet published.
 - Mining state is not yet persisted and reconciled after daemon restart.
 - Local web UI is not yet a complete operator workflow backed entirely by daemon state.
 - CI parity for the enforced local gates is not yet confirmed.

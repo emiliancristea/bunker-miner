@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::checksum::is_valid_sha256;
 use crate::config::CONFIG_DIR_ENV;
 
 pub const MINER_MANIFEST_PATH_ENV: &str = "BUNKER_MINER_MANIFEST_PATH";
@@ -65,6 +66,25 @@ impl MinerManifest {
             .map(|entry| entry.sha256.to_ascii_lowercase())
     }
 
+    pub fn matching_entries(
+        &self,
+        name: &str,
+        version: Option<&str>,
+        platform: &str,
+    ) -> Vec<MinerManifestEntry> {
+        self.miners
+            .iter()
+            .filter(|entry| {
+                entry.name.eq_ignore_ascii_case(name)
+                    && version
+                        .map(|version| entry.version == version)
+                        .unwrap_or(true)
+                    && platform_matches(&entry.platform, platform)
+            })
+            .cloned()
+            .collect()
+    }
+
     fn validate(&self) -> Result<()> {
         if self.schema_version != SUPPORTED_SCHEMA_VERSION {
             return Err(anyhow!(
@@ -80,6 +100,10 @@ impl MinerManifest {
             validate_required("platform", &entry.platform)?;
             validate_required("executable", &entry.executable)?;
             validate_required("source_url", &entry.source_url)?;
+            validate_manifest_token("name", &entry.name)?;
+            validate_manifest_token("version", &entry.version)?;
+            validate_manifest_platform(&entry.platform)?;
+            validate_manifest_token("executable", &entry.executable)?;
 
             if !is_valid_sha256(&entry.sha256) {
                 return Err(anyhow!(
@@ -149,6 +173,76 @@ pub fn trusted_sha256_for_binary(
     Ok(None)
 }
 
+pub fn trusted_entry_for_miner(name: &str, version: Option<&str>) -> Result<MinerManifestEntry> {
+    let platform = current_platform();
+    let mut available_versions = Vec::new();
+    let mut manifest_was_available = false;
+
+    for candidate in manifest_candidates() {
+        if !candidate.path.exists() {
+            if candidate.required {
+                return Err(anyhow!(
+                    "Configured miner manifest does not exist: {}",
+                    candidate.path.display()
+                ));
+            }
+            continue;
+        }
+
+        manifest_was_available = true;
+        let manifest = MinerManifest::from_path(&candidate.path)?;
+        let matches = manifest.matching_entries(name, version, &platform);
+
+        if matches.len() == 1 {
+            return Ok(matches[0].clone());
+        }
+
+        if matches.len() > 1 {
+            let versions = matches
+                .iter()
+                .map(|entry| entry.version.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(anyhow!(
+                "Miner manifest contains multiple matching entries for {name}; specify one of these versions: {versions}"
+            ));
+        }
+
+        available_versions.extend(
+            manifest
+                .matching_entries(name, None, &platform)
+                .into_iter()
+                .map(|entry| entry.version),
+        );
+    }
+
+    if !manifest_was_available {
+        return Err(anyhow!(
+            "No miner manifest is available. Set BUNKER_MINER_MANIFEST_PATH or place miner-manifest.toml in the managed config directory."
+        ));
+    }
+
+    available_versions.sort();
+    available_versions.dedup();
+
+    match (version, available_versions.is_empty()) {
+        (Some(version), false) => Err(anyhow!(
+            "No manifest entry found for {name} {version} on {platform}; available versions: {}",
+            available_versions.join(", ")
+        )),
+        (Some(version), true) => Err(anyhow!(
+            "No manifest entry found for {name} {version} on {platform}"
+        )),
+        (None, false) => Err(anyhow!(
+            "No unique manifest entry found for {name} on {platform}; specify one of these versions: {}",
+            available_versions.join(", ")
+        )),
+        (None, true) => Err(anyhow!(
+            "No manifest entry found for {name} on {platform}"
+        )),
+    }
+}
+
 pub fn current_platform() -> String {
     format!("{}-{}", env::consts::OS, env::consts::ARCH)
 }
@@ -192,12 +286,29 @@ fn validate_required(field: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
-fn platform_matches(entry_platform: &str, current_platform: &str) -> bool {
-    matches!(entry_platform, "*" | "any") || entry_platform.eq_ignore_ascii_case(current_platform)
+fn validate_manifest_token(field: &str, value: &str) -> Result<()> {
+    if !value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return Err(anyhow!(
+            "Manifest field {field} may only contain ASCII letters, numbers, dots, underscores, and hyphens"
+        ));
+    }
+
+    Ok(())
 }
 
-fn is_valid_sha256(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+fn validate_manifest_platform(value: &str) -> Result<()> {
+    if matches!(value, "*" | "any") {
+        return Ok(());
+    }
+
+    validate_manifest_token("platform", value)
+}
+
+fn platform_matches(entry_platform: &str, current_platform: &str) -> bool {
+    matches!(entry_platform, "*" | "any") || entry_platform.eq_ignore_ascii_case(current_platform)
 }
 
 #[cfg(test)]
@@ -270,5 +381,26 @@ source_url = "http://example.com/xmrig.zip"
         .unwrap_err();
 
         assert!(error.to_string().contains("source_url must use https"));
+    }
+
+    #[test]
+    fn manifest_rejects_path_like_executable() {
+        let error = MinerManifest::parse_toml(&format!(
+            r#"
+schema_version = 1
+
+[[miners]]
+name = "XMRig"
+version = "6.20.0"
+platform = "any"
+executable = "../xmrig.exe"
+sha256 = "{}"
+source_url = "https://github.com/xmrig/xmrig/releases/download/v6.20.0/xmrig.zip"
+"#,
+            TEST_HASH
+        ))
+        .unwrap_err();
+
+        assert!(error.to_string().contains("Manifest field executable"));
     }
 }

@@ -85,7 +85,8 @@ quarantined future tiers:
 | Local Miner MVP | `docs/specs/LOCAL_MINER_MVP.md` | First product-grade release target: verified miner launch, telemetry, stop, and clear failure states. |
 | Config | `daemon/src/config.rs` | Encrypted daemon configuration, wallet/pool config, security settings, validation. |
 | Miner adapter | `daemon/src/miners.rs` | Supported miner identity, argument construction, binary verification, telemetry parsing. |
-| Miner manifest | `daemon/src/miner_manifest.rs` | Validated TOML trust source for miner executable checksums. |
+| Miner manifest | `daemon/src/miner_manifest.rs` | Validated TOML trust source for miner archive and executable checksums. |
+| Miner installer | `daemon/src/miner_installer.rs` | Explicit manifest-backed acquisition path with archive hash verification, constrained zip extraction, executable hash verification, and managed install. |
 | Process supervisor | `daemon/src/miners.rs` | Starts miner process without shell interpolation, parses output, handles stop/restart state. |
 | Hardware detector | `daemon/src/hardware.rs` | Discovers devices and exposes metrics/permission status. |
 | Telemetry | `daemon/src/telemetry.rs`, `daemon/src/miners.rs`, `protos/daemon_api.v1.proto` | Mining and device state flowing from daemon to CLI/UI/API consumers. |
@@ -103,7 +104,7 @@ quarantined future tiers:
 | Add/change daemon API | `protos/daemon_api.v1.proto`, `daemon/src/grpc.rs`, CLI generated bindings |
 | Add CLI command | `tools/bunker-miner-cli/src/main.rs` |
 | Add miner adapter | `daemon/src/miners.rs` |
-| Change miner trust model | `daemon/src/miner_manifest.rs`, `daemon/src/miners.rs` |
+| Change miner trust model | `daemon/src/miner_manifest.rs`, `daemon/src/miner_installer.rs`, `daemon/src/miners.rs` |
 | Change config model | `daemon/src/config.rs` |
 | Change hardware detection | `daemon/src/hardware.rs` |
 | Change telemetry stream | `daemon/src/grpc.rs`, `daemon/src/telemetry.rs`, `daemon/src/miners.rs` |
@@ -133,8 +134,8 @@ Active product path:
 
 Product blockers:
 
-- No verified miner install/acquire workflow yet.
-- No real XMRig start-to-telemetry validation evidence with a trusted binary.
+- No real XMRig start-to-telemetry validation evidence with a trusted manifest entry and binary.
+- No curated production manifest/release evidence for supported miner archives.
 - Mining state is not persisted and reconciled after daemon restart.
 - Local dashboard is not yet a complete operator workflow.
 - CI parity with local gates still needs confirmation.

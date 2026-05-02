@@ -1,8 +1,10 @@
 pub mod benchmarking;
+pub mod checksum;
 pub mod config;
 pub mod fleet_agent;
 pub mod grpc;
 pub mod hardware;
+pub mod miner_installer;
 pub mod miner_manifest;
 pub mod miners;
 pub mod overclocking;

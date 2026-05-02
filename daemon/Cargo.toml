@@ -56,8 +56,12 @@ regex = "1.10"
 # Hashing for verified miner executables
 sha2 = "0.10"
 
+# Temporary files and archive extraction for verified miner acquisition
+tempfile = "3.0"
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
 # HTTP client for API calls
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.11", features = ["json", "stream"] }
 
 # Error handling
 anyhow = "1.0"
@@ -91,7 +95,6 @@ tonic-build = "0.10"
 [dev-dependencies]
 tokio-test = "0.4"
 mockall = "0.11"
-tempfile = "3.0"
 
 [[bin]]
 name = "bunker-miner-daemon"

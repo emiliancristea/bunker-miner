@@ -57,7 +57,7 @@ A quarantined crate can be promoted into the root workspace when:
 
 The daemon is now part of the enforced workspace. The promoted baseline includes real process lifecycle wiring for `StartMining`/`StopMining`, protobuf API alignment, warning-free strict checks, and daemon integration tests.
 
-Automatic third-party miner downloads remain disabled until verified archive acquisition and extraction are implemented. If a miner binary is missing or lacks a trusted SHA-256 from sidecar, environment, or manifest, daemon startup fails with an explicit installation error instead of reporting fake success.
+Manifest-backed third-party miner installation is available through the explicit daemon/CLI install path. `StartMining` still never performs implicit network downloads: if a miner binary is missing or lacks a trusted SHA-256 from sidecar, environment, or manifest, startup fails with an explicit installation error instead of reporting fake success.
 
 Daemon service startup now supports non-interactive configuration through `BUNKER_MINER_CONFIG_DIR`, `BUNKER_MINER_CONFIG_PASSWORD`, and `BUNKER_MINER_CONFIG_PASSWORD_FILE`. Fresh encrypted config templates may contain placeholder wallets, but mining startup still rejects placeholder wallets.
 
@@ -66,3 +66,5 @@ Daemon service startup now supports non-interactive configuration through `BUNKE
 The CLI is now part of the enforced workspace. The promoted baseline includes generated protobuf compatibility with `protos/daemon_api.v1.proto`, strict command parsing, real `StartMiningRequest` construction, `StopMining` support, telemetry streaming, config get/set, and parser unit tests.
 
 Manual smoke evidence on 2026-05-01: `bunker-miner-daemon serve` started with a temporary config dir and env-provided config password; `bunker-miner-cli health` returned `HEALTHY`; `bunker-miner-cli start --algorithm randomx ...` reached the structured `MINER_BINARY_UNAVAILABLE` response because no trusted XMRig binary was installed.
+
+Manual smoke evidence on 2026-05-02: `bunker-miner-daemon serve` started with an isolated config dir and env-provided config password; `bunker-miner-cli health` returned `HEALTHY`; `bunker-miner-cli miner install --name XMRig --version 6.20.0` reached structured `MINER_INSTALL_FAILED` with remediation because no miner manifest was configured.

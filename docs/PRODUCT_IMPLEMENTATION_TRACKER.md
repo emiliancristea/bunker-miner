@@ -22,8 +22,8 @@ This tracker converts `docs/PRODUCT_SPEC.md` into durable implementation units. 
 | LM-003 | CLI control surface | done | CLI compiles in workspace and builds real daemon requests | `tools/bunker-miner-cli` promoted |
 | LM-004 | Non-interactive daemon service startup | done | Daemon can run with env/file supplied config secret and isolated config dir | `BUNKER_MINER_CONFIG_DIR`, `BUNKER_MINER_CONFIG_PASSWORD`, `BUNKER_MINER_CONFIG_PASSWORD_FILE` |
 | LM-005 | Trusted miner manifest model | done | Manifest schema validates platform, miner identity, executable name, source URL, and SHA-256 | Implemented `daemon::miner_manifest`; checksum trust is wired into miner verification |
-| LM-006 | Miner binary install/acquire workflow | planned | User can install a supported miner into managed storage with verified checksum and no shell execution | Depends on LM-005 |
-| LM-007 | Real XMRig start-to-telemetry validation | blocked | Verified XMRig launches, emits telemetry, and stops cleanly through daemon + CLI | Depends on LM-006 and a licensed test fixture or user-provided binary |
+| LM-006 | Miner binary install/acquire workflow | done | User can install a manifest-described miner into managed storage with verified checksum and no shell execution | Manifest-backed HTTPS zip installer verifies archive SHA-256, extracts only the expected executable, verifies executable SHA-256, and is exposed through gRPC/CLI |
+| LM-007 | Real XMRig start-to-telemetry validation | blocked | Verified XMRig launches, emits telemetry, and stops cleanly through daemon + CLI | Requires a trusted XMRig manifest entry and validation fixture or user-provided binary evidence |
 | LM-008 | Miner crash recovery | planned | Crashes are classified, restart policy is enforced, and final state is observable | Needs integration harness |
 | LM-009 | Mining state API | planned | API exposes idle/starting/running/stopping/error state with active config and process health | Required before UI claims |
 | LM-010 | Config validation/apply workflow | planned | Config validate/set is atomic and secrets are redacted in exports/logs | Current gRPC set path needs schema validation |

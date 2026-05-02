@@ -42,6 +42,7 @@ enum Commands {
     Health,
     Start(StartArgs),
     Stop(StopArgs),
+    Miner(MinerArgs),
     Watch(WatchArgs),
     Profitability,
     Config(ConfigArgs),
@@ -93,6 +94,36 @@ struct StopArgs {
     force: bool,
 
     #[arg(long = "timeout-seconds", value_name = "SECONDS", default_value_t = 30)]
+    timeout_seconds: u32,
+}
+
+#[derive(Debug, Args)]
+struct MinerArgs {
+    #[command(subcommand)]
+    command: Option<MinerCommands>,
+}
+
+#[derive(Debug, Subcommand)]
+enum MinerCommands {
+    Install(MinerInstallArgs),
+}
+
+#[derive(Debug, Args)]
+struct MinerInstallArgs {
+    #[arg(long, short = 'n', value_name = "NAME")]
+    name: String,
+
+    #[arg(long, short = 'v', value_name = "VERSION")]
+    version: Option<String>,
+
+    #[arg(long, short = 'f', action = ArgAction::SetTrue)]
+    force: bool,
+
+    #[arg(
+        long = "timeout-seconds",
+        value_name = "SECONDS",
+        default_value_t = 120
+    )]
     timeout_seconds: u32,
 }
 
@@ -159,6 +190,7 @@ async fn main() -> Result<()> {
         Commands::Health => health_command(&mut client).await?,
         Commands::Start(args) => start_command(&mut client, args).await?,
         Commands::Stop(args) => stop_command(&mut client, args).await?,
+        Commands::Miner(args) => miner_command(&mut client, args).await?,
         Commands::Watch(args) => watch_command(&mut client, args).await?,
         Commands::Profitability => profitability_command(&mut client).await?,
         Commands::Config(args) => config_command(&mut client, args).await?,
@@ -288,6 +320,51 @@ async fn stop_command(client: &mut BunkerMinerDaemonClient<Channel>, args: StopA
     let response = client.stop_mining(request).await?.into_inner();
     print_command_response(&response);
     ensure_command_succeeded(&response)?;
+
+    Ok(())
+}
+
+async fn miner_command(
+    client: &mut BunkerMinerDaemonClient<Channel>,
+    args: MinerArgs,
+) -> Result<()> {
+    match args.command {
+        Some(MinerCommands::Install(args)) => miner_install_command(client, args).await,
+        None => {
+            println!("BUNKER MINER - Miner Management");
+            println!("===============================");
+            println!("Use 'miner install --help'.");
+            Ok(())
+        }
+    }
+}
+
+async fn miner_install_command(
+    client: &mut BunkerMinerDaemonClient<Channel>,
+    args: MinerInstallArgs,
+) -> Result<()> {
+    let miner_name = require_non_empty("name", args.name)?;
+    let version = args
+        .version
+        .map(|version| require_non_empty("version", version))
+        .transpose()?
+        .unwrap_or_default();
+
+    println!("BUNKER MINER - Install Miner");
+    println!("============================");
+
+    let response = client
+        .install_miner(InstallMinerRequest {
+            miner_name,
+            version,
+            force: args.force,
+            timeout_seconds: bounded_timeout(args.timeout_seconds, 120, 600),
+        })
+        .await?
+        .into_inner();
+
+    print_install_miner_response(&response);
+    ensure_install_succeeded(&response)?;
 
     Ok(())
 }
@@ -594,11 +671,56 @@ fn print_command_response(response: &CommandResponse) {
     }
 }
 
+fn print_install_miner_response(response: &InstallMinerResponse) {
+    println!();
+    println!("Result: {}", command_status_label(response.status));
+    println!("Message: {}", response.message);
+    println!("Execution time: {}ms", response.execution_duration_ms);
+
+    if let Some(installed_miner) = response.installed_miner.as_ref() {
+        println!();
+        println!("Installed Miner");
+        println!("  Name: {}", installed_miner.miner_name);
+        println!("  Version: {}", installed_miner.version);
+        println!("  Executable: {}", installed_miner.executable_path);
+        println!("  SHA-256: {}", installed_miner.executable_sha256);
+        println!("  Source: {}", installed_miner.source_url);
+    }
+
+    if let Some(error_details) = response.error_details.as_ref() {
+        println!();
+        println!("Error Details");
+        println!("  Code: {}", error_details.error_code);
+        println!("  Description: {}", error_details.error_description);
+
+        if !error_details.remediation_steps.is_empty() {
+            println!("  Remediation");
+            for (index, step) in error_details.remediation_steps.iter().enumerate() {
+                println!("    {}. {}", index + 1, step);
+            }
+        }
+    }
+
+    if let Some(timestamp) = format_timestamp(response.timestamp.as_ref()) {
+        println!("Timestamp: {timestamp}");
+    }
+}
+
 fn ensure_command_succeeded(response: &CommandResponse) -> Result<()> {
     match enum_value(response.status, command_response::Status::Unknown) {
         command_response::Status::Success => Ok(()),
         _ => bail!(
             "daemon command returned {}",
+            command_status_label(response.status)
+        ),
+    }
+}
+
+fn ensure_install_succeeded(response: &InstallMinerResponse) -> Result<()> {
+    match enum_value(response.status, command_response::Status::Unknown) {
+        command_response::Status::Success => Ok(()),
+        _ => bail!(
+            "daemon install returned {}",
             command_status_label(response.status)
         ),
     }
@@ -702,5 +824,31 @@ mod tests {
 
         assert_eq!(params.get("rig").map(String::as_str), Some("alpha"));
         assert!(parse_extra_params(vec!["rig".to_string()]).is_err());
+    }
+
+    #[test]
+    fn cli_parses_miner_install_command() {
+        let cli = Cli::try_parse_from([
+            "bunker-miner-cli",
+            "miner",
+            "install",
+            "--name",
+            "XMRig",
+            "--version",
+            "6.20.0",
+            "--force",
+        ])
+        .unwrap();
+
+        match cli.command.unwrap() {
+            Commands::Miner(MinerArgs {
+                command: Some(MinerCommands::Install(args)),
+            }) => {
+                assert_eq!(args.name, "XMRig");
+                assert_eq!(args.version.as_deref(), Some("6.20.0"));
+                assert!(args.force);
+            }
+            _ => panic!("expected miner install command"),
+        }
     }
 }

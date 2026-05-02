@@ -12,6 +12,7 @@ use tracing::{debug, info, warn};
 
 use crate::config::{Config, GrpcConfig, PoolConfig, WalletConfig};
 use crate::hardware::{DeviceType as HardwareDeviceType, HardwareDetector, MiningDevice};
+use crate::miner_installer::MinerInstaller;
 use crate::miners::{MinerManager, ProcessSupervisor, Telemetry as MinerTelemetry};
 use crate::profit_engine::ProfitEngineService;
 
@@ -266,8 +267,8 @@ impl BunkerMinerDaemon for BunkerMinerDaemonImpl {
                         "MINER_BINARY_UNAVAILABLE",
                         error.to_string(),
                         [
-                            "Install the selected miner binary manually",
-                            "Provide a trusted SHA-256 sidecar file or environment variable",
+                            "Run bunker-miner-cli miner install with a trusted manifest entry",
+                            "Or install the selected miner binary manually and provide a trusted SHA-256 sidecar file or environment variable",
                             "Set BUNKER_MINERS_PATH or BUNKER_MINER_<MINER>_PATH if the binary is outside the managed directory",
                         ]
                         .as_slice(),
@@ -362,6 +363,70 @@ impl BunkerMinerDaemon for BunkerMinerDaemonImpl {
             format!("Stopped {stopped} miner process supervisor(s)"),
             started_at,
         )))
+    }
+
+    async fn install_miner(
+        &self,
+        request: Request<InstallMinerRequest>,
+    ) -> std::result::Result<Response<InstallMinerResponse>, Status> {
+        let started_at = Instant::now();
+        let req = request.into_inner();
+        let miner_name = req.miner_name.trim().to_string();
+        let version = req.version.trim().to_string();
+        let install_timeout = bounded_timeout(req.timeout_seconds, 120, 600);
+
+        if miner_name.is_empty() {
+            return Err(Status::invalid_argument("miner_name is required"));
+        }
+
+        info!(
+            "Received InstallMiner request for {} {}",
+            miner_name,
+            if version.is_empty() {
+                "(manifest-selected version)"
+            } else {
+                version.as_str()
+            }
+        );
+
+        let binaries_dir = {
+            let miner_manager = self.state.miner_manager.read().await;
+            miner_manager.binaries_dir().to_path_buf()
+        };
+        let installer = MinerInstaller::new(binaries_dir);
+        let version_ref = if version.is_empty() {
+            None
+        } else {
+            Some(version.as_str())
+        };
+
+        match tokio::time::timeout(
+            Duration::from_secs(install_timeout),
+            installer.install_from_manifest(&miner_name, version_ref, req.force),
+        )
+        .await
+        {
+            Ok(Ok(result)) => Ok(Response::new(install_miner_success(result, started_at))),
+            Ok(Err(error)) => Ok(Response::new(install_miner_error(
+                "MINER_INSTALL_FAILED",
+                error.to_string(),
+                [
+                    "Set BUNKER_MINER_MANIFEST_PATH or provide managed miner-manifest.toml",
+                    "Ensure the manifest has archive_sha256 and executable sha256 for this platform",
+                    "Use force only when intentionally replacing a mismatched existing executable",
+                ]
+                .as_slice(),
+                started_at,
+            ))),
+            Err(_) => Ok(Response::new(InstallMinerResponse {
+                status: command_response::Status::Timeout as i32,
+                message: "Timed out while installing miner".to_string(),
+                installed_miner: None,
+                error_details: None,
+                timestamp: Some(now_timestamp()),
+                execution_duration_ms: elapsed_ms(started_at),
+            })),
+        }
     }
 
     type StreamTelemetryStream = TelemetryStream;
@@ -833,6 +898,50 @@ fn command_error(
         error_details: Some(command_response::ErrorDetails {
             error_code: code.into(),
             error_description: "Command could not be completed".to_string(),
+            affected_devices: vec![],
+            remediation_steps: remediation_steps
+                .iter()
+                .map(|step| step.to_string())
+                .collect(),
+        }),
+        timestamp: Some(now_timestamp()),
+        execution_duration_ms: elapsed_ms(started_at),
+    }
+}
+
+fn install_miner_success(
+    result: crate::miner_installer::MinerInstallResult,
+    started_at: Instant,
+) -> InstallMinerResponse {
+    InstallMinerResponse {
+        status: command_response::Status::Success as i32,
+        message: format!("Installed {} {}", result.name, result.version),
+        installed_miner: Some(InstallMinerResult {
+            miner_name: result.name,
+            version: result.version,
+            executable_path: result.executable_path.display().to_string(),
+            executable_sha256: result.executable_sha256,
+            source_url: result.source_url,
+        }),
+        error_details: None,
+        timestamp: Some(now_timestamp()),
+        execution_duration_ms: elapsed_ms(started_at),
+    }
+}
+
+fn install_miner_error(
+    code: impl Into<String>,
+    message: impl Into<String>,
+    remediation_steps: &[&str],
+    started_at: Instant,
+) -> InstallMinerResponse {
+    InstallMinerResponse {
+        status: command_response::Status::Error as i32,
+        message: message.into(),
+        installed_miner: None,
+        error_details: Some(command_response::ErrorDetails {
+            error_code: code.into(),
+            error_description: "Miner install could not be completed".to_string(),
             affected_devices: vec![],
             remediation_steps: remediation_steps
                 .iter()

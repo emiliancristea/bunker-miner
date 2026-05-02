@@ -2,10 +2,8 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::env;
-use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -17,6 +15,7 @@ use tokio::sync::{mpsc, RwLock};
 use tokio::time::{sleep, timeout};
 use tracing::{debug, error, info, warn};
 
+use crate::checksum::{is_valid_sha256, parse_sha256_value, sha256_file};
 use crate::config::{Config, CONFIG_DIR_ENV};
 use crate::miner_manifest;
 
@@ -255,7 +254,7 @@ impl MinerAdapter for LolMinerAdapter {
 
     async fn download_binary(&self, download_dir: &Path) -> Result<PathBuf> {
         Err(anyhow!(
-            "Automatic download for {} is disabled until verified archive acquisition is implemented; install it under {} manually and provide a trusted checksum",
+            "Implicit adapter download for {} is disabled; use the manifest-backed installer or install it under {} manually and provide a trusted checksum",
             self.binary_info.name,
             download_dir.display()
         ))
@@ -437,7 +436,7 @@ impl MinerAdapter for XMRigAdapter {
 
     async fn download_binary(&self, download_dir: &Path) -> Result<PathBuf> {
         Err(anyhow!(
-            "Automatic download for {} is disabled until verified archive acquisition is implemented; install it under {} manually and provide a trusted checksum",
+            "Implicit adapter download for {} is disabled; use the manifest-backed installer or install it under {} manually and provide a trusted checksum",
             self.binary_info.name,
             download_dir.display()
         ))
@@ -494,6 +493,10 @@ impl MinerManager {
         self.adapters.keys().cloned().collect()
     }
 
+    pub fn binaries_dir(&self) -> &Path {
+        &self.binaries_dir
+    }
+
     pub async fn ensure_binary_available(
         &self,
         adapter: &Arc<dyn MinerAdapter>,
@@ -527,7 +530,7 @@ impl MinerManager {
         fs::create_dir_all(&binary_dir).context("Failed to create binary directory")?;
 
         Err(anyhow!(
-            "{} binary is not installed with a trusted checksum. Automatic miner downloads are disabled until verified archive acquisition is implemented. Install the miner manually under {}, set BUNKER_MINERS_PATH or BUNKER_MINER_{}_PATH, and provide a SHA-256 via sidecar .sha256, BUNKER_MINER_{}_SHA256, BUNKER_MINER_MANIFEST_PATH, or managed miner-manifest.toml. Verification attempts: {}",
+            "{} binary is not installed with a trusted checksum. StartMining does not perform implicit downloads. Install the miner with the manifest-backed installer, install it manually under {}, or set BUNKER_MINERS_PATH or BUNKER_MINER_{}_PATH, then provide a SHA-256 via sidecar .sha256, BUNKER_MINER_{}_SHA256, BUNKER_MINER_MANIFEST_PATH, or managed miner-manifest.toml. Verification attempts: {}",
             binary_info.name,
             binary_dir.display(),
             miner_env_key(&binary_info.name),
@@ -657,36 +660,6 @@ fn expected_sha256(binary_path: &Path, binary_info: &MinerBinary) -> Result<Opti
     }
 
     Ok(None)
-}
-
-async fn sha256_file(path: &Path) -> Result<String> {
-    let data = tokio::fs::read(path)
-        .await
-        .with_context(|| format!("Failed to read {}", path.display()))?;
-    Ok(sha256_bytes(&data))
-}
-
-fn sha256_bytes(data: &[u8]) -> String {
-    let digest = Sha256::digest(data);
-    let mut output = String::with_capacity(64);
-    for byte in digest {
-        write!(&mut output, "{byte:02x}").expect("writing to String cannot fail");
-    }
-    output
-}
-
-fn parse_sha256_value(value: &str) -> Result<String> {
-    let Some(candidate) = value.split_whitespace().find(|part| is_valid_sha256(part)) else {
-        return Err(anyhow!(
-            "Checksum value must contain a 64-character lowercase or uppercase hex SHA-256 digest"
-        ));
-    };
-
-    Ok(candidate.to_ascii_lowercase())
-}
-
-fn is_valid_sha256(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn binary_executable_name(binary_info: &MinerBinary) -> String {
@@ -1002,6 +975,7 @@ fn build_pool_endpoint(pool: &crate::config::PoolConfig, secure_scheme: &str) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::checksum::sha256_bytes;
 
     struct ShellTelemetryAdapter {
         args: Vec<String>,
