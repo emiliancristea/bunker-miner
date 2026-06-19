@@ -13,7 +13,7 @@
 # - Explicit port and volume declarations
 
 # Stage 1: Build Environment
-FROM rust:1.75-bookworm as builder
+FROM rust:1.91-bookworm as builder
 
 # Set build-time metadata
 LABEL stage=builder
